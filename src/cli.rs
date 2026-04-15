@@ -43,10 +43,25 @@ pub struct CliOptions {
 impl Default for CliOptions {
     fn default() -> Self {
         Self {
-            command: Command::Record { session_id: None },
+            command: default_command(),
             config_path: None,
             output_dir: None,
         }
+    }
+}
+
+fn default_command() -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        Command::Desktop {
+            background: false,
+            autorun_record: false,
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::Record { session_id: None }
     }
 }
 

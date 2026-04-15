@@ -1,3 +1,5 @@
+#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+
 use screen_timeline_recorder::{
     cli::{CliOptions, Command, load_config},
     desktop::run_desktop,

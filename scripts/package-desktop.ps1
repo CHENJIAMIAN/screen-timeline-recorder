@@ -29,6 +29,20 @@ New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
 $distExe = Join-Path $distRoot "screen-timeline-recorder.exe"
 Copy-Item -Force $exePath $distExe
 
+$viewerSource = Join-Path $repoRoot "viewer"
+$viewerDest = Join-Path $distRoot "viewer"
+if (Test-Path $viewerDest) {
+  Remove-Item -Recurse -Force $viewerDest
+}
+Copy-Item -Recurse -Force $viewerSource $viewerDest
+
+$iconSourceDir = Join-Path $repoRoot "icons"
+$iconDestDir = Join-Path $distRoot "icons"
+if (Test-Path $iconDestDir) {
+  Remove-Item -Recurse -Force $iconDestDir
+}
+Copy-Item -Recurse -Force $iconSourceDir $iconDestDir
+
 $readmePath = Join-Path $distRoot "README.txt"
 $readmeLines = @(
   "Screen Timeline Recorder Desktop"

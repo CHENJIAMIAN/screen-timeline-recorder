@@ -166,7 +166,7 @@ fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&quit_item)?;
 
-    let icon = Image::from_path("icons/icon.ico")?;
+    let icon = Image::from_path(resolve_icon_path())?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .tooltip(text.app_name)
@@ -522,6 +522,22 @@ fn latest_session_id_or_placeholder(config: &RecorderConfig) -> String {
         .and_then(|sessions| sessions.into_iter().next())
         .map(|session| session.session_id)
         .unwrap_or_else(|| "desktop-empty".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_icon_path() -> PathBuf {
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        let packaged_icon = exe_dir.join("icons").join("icon.ico");
+        if packaged_icon.is_file() {
+            return packaged_icon;
+        }
+    }
+
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("icons")
+        .join("icon.ico")
 }
 
 #[cfg(not(target_os = "windows"))]

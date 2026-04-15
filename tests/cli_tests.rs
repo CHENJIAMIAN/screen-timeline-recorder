@@ -6,6 +6,20 @@ fn parse(args: &[&str]) -> Result<CliOptions, String> {
     CliOptions::parse_from_args(args.iter().map(|arg| arg.to_string()))
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn defaults_to_desktop_command_on_windows_when_no_subcommand_is_given() {
+    let options = parse(&["screen-timeline-recorder"]).expect("parse");
+
+    assert_eq!(
+        options.command,
+        Command::Desktop {
+            background: false,
+            autorun_record: false,
+        }
+    );
+}
+
 #[test]
 fn parses_view_command_with_session_id() {
     let options = parse(&["screen-timeline-recorder", "view", "2026-04-13"]).expect("parse");
