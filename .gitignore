@@ -1,1 +1,11 @@
 .worktrees/
+target/
+dist/
+output/
+smoke-desktop-output/
+*.log
+*.stderr.log
+*.stdout.log
+*-proof*.png
+frame-check*.png
+patch.diff

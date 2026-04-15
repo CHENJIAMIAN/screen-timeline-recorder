@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Screen Timeline Recorder",
+  "version": "0.1.0",
+  "identifier": "com.local.screen-timeline-recorder",
+  "build": {
+    "frontendDist": "viewer"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": null
+    }
+  }
+}
