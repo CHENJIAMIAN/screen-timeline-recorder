@@ -103,10 +103,18 @@ impl Frame {
         total_delta / (sample_columns * sample_rows) as f32
     }
 
-    pub fn resize_nearest(&self, target_width: usize, target_height: usize) -> Self {
+    pub fn resize_for_capture(&self, target_width: usize, target_height: usize) -> Self {
         assert!(target_width > 0, "target_width must be greater than zero");
         assert!(target_height > 0, "target_height must be greater than zero");
 
+        if target_width >= self.width && target_height >= self.height {
+            return self.resize_nearest(target_width, target_height);
+        }
+
+        self.resize_box_average(target_width, target_height)
+    }
+
+    fn resize_nearest(&self, target_width: usize, target_height: usize) -> Self {
         let mut rgba = vec![0u8; target_width * target_height * 4];
         for target_y in 0..target_height {
             let source_y = target_y * self.height / target_height;
@@ -116,6 +124,41 @@ impl Frame {
                 let target_idx = (target_y * target_width + target_x) * 4;
                 rgba[target_idx..target_idx + 4]
                     .copy_from_slice(&self.rgba[source_idx..source_idx + 4]);
+            }
+        }
+
+        Self {
+            width: target_width,
+            height: target_height,
+            rgba,
+        }
+    }
+
+    fn resize_box_average(&self, target_width: usize, target_height: usize) -> Self {
+        let mut rgba = vec![0u8; target_width * target_height * 4];
+        for target_y in 0..target_height {
+            let source_y0 = target_y * self.height / target_height;
+            let source_y1 = ((target_y + 1) * self.height).div_ceil(target_height);
+            for target_x in 0..target_width {
+                let source_x0 = target_x * self.width / target_width;
+                let source_x1 = ((target_x + 1) * self.width).div_ceil(target_width);
+                let target_idx = (target_y * target_width + target_x) * 4;
+                let mut sums = [0u32; 4];
+                let mut count = 0u32;
+                for source_y in source_y0..source_y1 {
+                    for source_x in source_x0..source_x1 {
+                        let source_idx = self.pixel_index(source_x, source_y);
+                        sums[0] += self.rgba[source_idx] as u32;
+                        sums[1] += self.rgba[source_idx + 1] as u32;
+                        sums[2] += self.rgba[source_idx + 2] as u32;
+                        sums[3] += self.rgba[source_idx + 3] as u32;
+                        count += 1;
+                    }
+                }
+                rgba[target_idx] = ((sums[0] + count / 2) / count) as u8;
+                rgba[target_idx + 1] = ((sums[1] + count / 2) / count) as u8;
+                rgba[target_idx + 2] = ((sums[2] + count / 2) / count) as u8;
+                rgba[target_idx + 3] = ((sums[3] + count / 2) / count) as u8;
             }
         }
 

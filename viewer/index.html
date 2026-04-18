@@ -13,49 +13,47 @@
           <div id="viewer-title" class="title">Screen Timeline Viewer</div>
           <div id="session-info" class="subtitle">Loading session...</div>
         </div>
-        <div class="controls">
-          <label class="field language-field">
-            <span id="language-label">Language</span>
-            <select id="language-select">
-              <option value="auto">Auto</option>
-              <option value="en">English</option>
-              <option value="zh">中文</option>
-            </select>
-          </label>
-        </div>
+        <label class="field language-field">
+          <span id="language-label">Language</span>
+          <select id="language-select">
+            <option value="auto">Auto</option>
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+          </select>
+        </label>
       </header>
 
-      <section id="quickstart" class="quickstart">
-        <div class="quickstart-header">
+      <section id="quickstart" class="panel quickstart">
+        <div class="panel-header">
           <div id="quickstart-title" class="title">How To Use</div>
-          <div id="quickstart-subtitle" class="subtitle">You only need three actions to review a day.</div>
+          <div id="quickstart-subtitle" class="subtitle">Three quick steps to review a day.</div>
         </div>
         <div class="quickstart-steps">
           <article class="quickstart-step">
             <span class="quickstart-step-number">1</span>
             <div>
-              <div id="quickstart-step1-title" class="quickstart-step-title">Pick a recent capture</div>
-              <div id="quickstart-step1-body" class="quickstart-step-body">Click any card in Recent Sessions to switch records.</div>
+              <div id="quickstart-step1-title" class="quickstart-step-title">Pick a recording</div>
+              <div id="quickstart-step1-body" class="quickstart-step-body">Choose any recent session card.</div>
             </div>
           </article>
           <article class="quickstart-step">
             <span class="quickstart-step-number">2</span>
             <div>
-              <div id="quickstart-step2-title" class="quickstart-step-title">Move through time</div>
-              <div id="quickstart-step2-body" class="quickstart-step-body">Drag the timeline or use the previous and next buttons.</div>
+              <div id="quickstart-step2-title" class="quickstart-step-title">Press play</div>
+              <div id="quickstart-step2-body" class="quickstart-step-body">Use the built-in video controls to watch the segment.</div>
             </div>
           </article>
           <article class="quickstart-step">
             <span class="quickstart-step-number">3</span>
             <div>
-              <div id="quickstart-step3-title" class="quickstart-step-title">Press play</div>
-              <div id="quickstart-step3-body" class="quickstart-step-body">Use Play and Speed to replay the screen history like a lightweight recording.</div>
+              <div id="quickstart-step3-title" class="quickstart-step-title">Move between clips</div>
+              <div id="quickstart-step3-body" class="quickstart-step-body">Use previous or next clip for long recordings split into segments.</div>
             </div>
           </article>
         </div>
       </section>
 
-      <section class="live-status">
+      <section class="panel live-status">
         <div class="live-status-header">
           <div id="live-status-title" class="title">Live Status</div>
           <div id="recording-badge" class="recording-badge">Checking...</div>
@@ -63,22 +61,20 @@
         <div class="live-status-actions">
           <button id="control-refresh" class="ghost" type="button">Refresh</button>
           <button id="control-start" class="primary" type="button">Start New Recording</button>
-          <button id="control-pause" type="button">Pause</button>
-          <button id="control-resume" type="button">Resume</button>
           <button id="control-stop" type="button">End Current Recording</button>
         </div>
         <div id="status-summary" class="status-summary">Waiting for heartbeat...</div>
       </section>
 
-      <section id="autostart-settings" class="autostart-settings">
-        <div class="autostart-header">
+      <section id="autostart-settings" class="panel">
+        <div class="panel-header split">
           <div>
             <div id="autostart-title" class="title">Autostart Recording</div>
             <div id="autostart-subtitle" class="subtitle">Start recording automatically after Windows login.</div>
           </div>
-          <div id="autostart-state" class="autostart-state">Checking...</div>
+          <div id="autostart-state" class="badge">Checking...</div>
         </div>
-        <div class="autostart-grid">
+        <div class="grid">
           <label class="toggle">
             <input id="autostart-enabled" type="checkbox" />
             <span id="autostart-enabled-label">Enable autostart recording</span>
@@ -91,120 +87,65 @@
             <span id="autostart-delay-label">Delay before start (seconds)</span>
             <input id="autostart-delay" type="number" min="0" max="3600" step="1" value="30" />
           </label>
-          <label class="field autostart-output-field">
+          <label class="field full-row">
             <span id="autostart-output-label">Recording output folder</span>
             <input id="autostart-output-dir" type="text" />
           </label>
         </div>
-        <div id="autostart-note" class="autostart-note">Uses a Windows Scheduled Task to start recording after login.</div>
-        <div id="autostart-feedback" class="autostart-feedback hidden">Saved.</div>
-        <div class="autostart-actions">
+        <div id="autostart-note" class="note">Uses a Windows Scheduled Task to start recording after login.</div>
+        <div id="autostart-feedback" class="feedback hidden">Saved.</div>
+        <div class="actions">
           <button id="autostart-refresh" class="ghost" type="button">Refresh</button>
           <button id="autostart-save" type="button">Save</button>
         </div>
       </section>
 
-      <section id="recording-settings" class="settings-panel">
-        <div class="settings-header">
-          <div>
-            <div id="recording-settings-title" class="title">Recording Quality</div>
-            <div id="recording-settings-subtitle" class="subtitle">Tune how often frames are sampled and how aggressively changes are kept.</div>
-          </div>
+      <section id="recording-settings" class="panel">
+        <div class="panel-header">
+          <div id="recording-settings-title" class="title">Video Recording</div>
+          <div id="recording-settings-subtitle" class="subtitle">Tune frame interval and capture scale for future video sessions.</div>
         </div>
-        <div class="settings-controls recording-settings-grid">
+        <div class="grid">
           <label class="field">
-            <span id="recording-sampling-interval-label">Sampling interval (ms)</span>
-            <input id="recording-sampling-interval" type="number" min="100" max="5000" step="50" value="500" />
+            <span id="recording-sampling-interval-label">Frame interval (ms)</span>
+            <input id="recording-sampling-interval" type="number" min="100" max="5000" step="50" value="100" />
           </label>
           <label class="field">
-            <span id="recording-sensitivity-mode-label">Sensitivity</span>
-            <select id="recording-sensitivity-mode">
-              <option value="conservative">Conservative</option>
-              <option value="balanced">Balanced</option>
-              <option value="detailed">Detailed</option>
-            </select>
-          </label>
-          <label class="field">
-            <span id="recording-working-scale-label">Working scale</span>
-            <input id="recording-working-scale" type="number" min="0.1" max="1" step="0.05" value="0.5" />
-          </label>
-          <label class="field">
-            <span id="recording-keyframe-interval-label">Full frame interval (seconds)</span>
-            <input id="recording-keyframe-interval" type="number" min="1" max="3600" step="1" value="60" />
-          </label>
-          <label class="field">
-            <span id="recording-block-width-label">Block width</span>
-            <input id="recording-block-width" type="number" min="4" max="256" step="4" value="32" />
-          </label>
-          <label class="field">
-            <span id="recording-block-height-label">Block height</span>
-            <input id="recording-block-height" type="number" min="4" max="256" step="4" value="32" />
+            <span id="recording-working-scale-label">Capture scale</span>
+            <input id="recording-working-scale" type="number" min="0.1" max="1" step="0.05" value="1" />
           </label>
           <label class="toggle">
             <input id="recording-burn-in-enabled" type="checkbox" checked />
-            <span id="recording-burn-in-enabled-label">Burn in system time on recorded frames</span>
+            <span id="recording-burn-in-enabled-label">Burn in wall-clock time on recorded video</span>
           </label>
         </div>
-        <div id="recording-settings-note" class="autostart-note">Lower interval and higher sensitivity catch more movement, but use more CPU and disk.</div>
-        <div id="recording-settings-feedback" class="autostart-feedback hidden">Saved.</div>
-        <div class="settings-actions">
+        <div id="recording-settings-note" class="note">Frame interval controls video FPS. Capture scale controls resolution and file size. Time watermark is burned into the recorded video.</div>
+        <div id="recording-settings-feedback" class="feedback hidden">Saved.</div>
+        <div class="actions">
           <button id="recording-refresh" class="ghost" type="button">Refresh</button>
           <button id="recording-save" type="button">Save</button>
         </div>
       </section>
 
-      <section id="session-list" class="session-list">
-        <div class="session-list-header">
+      <section class="panel viewer-panel">
+        <div class="panel-header split">
           <div>
-            <div id="recent-sessions-title" class="title">Recent Sessions</div>
-            <div id="recent-sessions-subtitle" class="subtitle">Switch between recent captures without retyping IDs</div>
+            <div id="viewer-panel-title" class="title">Playback</div>
+            <div id="viewer-panel-subtitle" class="subtitle">Native video playback with automatic clip handoff.</div>
           </div>
-          <div class="session-list-actions">
-            <label class="field session-filter-field">
-              <span id="session-filter-label">Date Filter</span>
-              <select id="session-filter">
-                <option value="all">All dates</option>
-              </select>
-            </label>
-            <button id="delete-day-sessions" class="ghost danger" type="button">Delete Day</button>
-            <button id="delete-all-sessions" class="ghost danger" type="button">Delete All</button>
-            <button id="refresh-sessions" class="ghost">Refresh</button>
-          </div>
+          <div id="viewer-segment-badge" class="badge">0 / 0</div>
         </div>
-        <div id="session-list-grid" class="session-list-grid"></div>
-      </section>
-
-      <section class="viewer">
-        <canvas id="canvas"></canvas>
-      </section>
-
-      <section class="viewer-dock">
-        <label class="field timestamp-field viewer-dock-timestamp">
-          <span id="timestamp-label">Selected Time</span>
-          <input id="timestamp-friendly" type="text" readonly />
-          <span id="timestamp-help" class="field-help">Elapsed since start plus wall-clock time. Enable advanced input for raw milliseconds.</span>
-          <label class="toggle subtle-toggle">
-            <input id="advanced-time-toggle" type="checkbox" />
-            <span id="advanced-time-label">Advanced Time Input</span>
-          </label>
-          <input id="timestamp" type="number" min="0" step="1" class="hidden" />
-        </label>
-        <label class="field timeline-field viewer-dock-timeline">
-          <span id="timeline-title">Timeline</span>
-          <input id="timeline" type="range" min="0" max="0" step="1" value="0" />
-          <span id="timeline-label" class="timeline-label">0ms</span>
-          <div id="activity-strip" class="activity-strip"></div>
-        </label>
-        <div class="viewer-dock-actions">
-          <div class="buttons">
-            <button id="prev">-10s</button>
-            <button id="next">+10s</button>
-            <button id="load">Load</button>
+        <video id="video-player" controls playsinline muted></video>
+        <div id="viewer-player-panel" class="viewer-player-panel">
+          <div class="viewer-player-meta">
+            <div id="viewer-segment-title" class="viewer-player-title">No video loaded</div>
+            <div id="viewer-segment-range" class="viewer-player-range">Select a recording to begin.</div>
           </div>
-          <div class="playback-controls">
-            <button id="play-pause" type="button">Play</button>
-            <div class="speed-selector">
-              <label id="speed-label" for="playback-speed">Speed</label>
+          <div class="viewer-player-actions">
+            <button id="segment-prev" class="ghost" type="button">Previous Clip</button>
+            <button id="segment-next" class="ghost" type="button">Next Clip</button>
+            <label class="field compact-field">
+              <span id="speed-label">Speed</span>
               <select id="playback-speed">
                 <option value="0.25">0.25x</option>
                 <option value="0.5">0.5x</option>
@@ -217,17 +158,34 @@
                 <option value="4">4x</option>
                 <option value="8">8x</option>
               </select>
-            </div>
-            <label class="toggle subtle-toggle playback-loop-toggle">
+            </label>
+            <label class="toggle">
               <input id="playback-loop" type="checkbox" />
               <span id="playback-loop-label">Loop playback</span>
             </label>
           </div>
-          <label class="toggle">
-            <input id="overlay" type="checkbox" />
-            <span id="overlay-label">Overlay patches</span>
-          </label>
         </div>
+      </section>
+
+      <section id="session-list" class="panel">
+        <div class="panel-header split">
+          <div>
+            <div id="recent-sessions-title" class="title">Recent Sessions</div>
+            <div id="recent-sessions-subtitle" class="subtitle">Sorted by most recent activity so the latest work stays on top.</div>
+          </div>
+          <div class="session-list-actions">
+            <label class="field compact-field">
+              <span id="session-filter-label">Date Filter</span>
+              <select id="session-filter">
+                <option value="all">All dates</option>
+              </select>
+            </label>
+            <button id="delete-day-sessions" class="ghost danger" type="button">Delete Day</button>
+            <button id="delete-all-sessions" class="ghost danger" type="button">Delete All</button>
+            <button id="refresh-sessions" class="ghost" type="button">Refresh</button>
+          </div>
+        </div>
+        <div id="session-list-grid" class="session-list-grid"></div>
       </section>
 
       <footer class="status">
@@ -236,6 +194,7 @@
     </main>
     <script src="control_logic.js"></script>
     <script src="session_list_logic.js"></script>
+    <script src="video_playback_logic.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

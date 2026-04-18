@@ -5,11 +5,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::recorder::RecordingStats;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecordingFormat {
+    PatchFrames,
+    VideoSegments,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Manifest {
     pub session_id: String,
     pub started_at: u64,
     pub finished_at: Option<u64>,
+    #[serde(default)]
+    pub recording_format: RecordingFormat,
     pub display_width: u32,
     pub display_height: u32,
     pub working_width: u32,
@@ -50,6 +59,7 @@ pub struct SessionLayout {
     pause_signal_path: PathBuf,
     keyframes_dir: PathBuf,
     patches_dir: PathBuf,
+    segments_dir: PathBuf,
     index_dir: PathBuf,
 }
 
@@ -70,6 +80,7 @@ impl SessionLayout {
         let pause_signal_path = root.join("pause.signal");
         let keyframes_dir = root.join("keyframes");
         let patches_dir = root.join("patches");
+        let segments_dir = root.join("segments");
         let index_dir = root.join("index");
 
         Self {
@@ -80,6 +91,7 @@ impl SessionLayout {
             pause_signal_path,
             keyframes_dir,
             patches_dir,
+            segments_dir,
             index_dir,
         }
     }
@@ -87,6 +99,7 @@ impl SessionLayout {
     pub fn create_dirs(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.keyframes_dir)?;
         std::fs::create_dir_all(&self.patches_dir)?;
+        std::fs::create_dir_all(&self.segments_dir)?;
         std::fs::create_dir_all(&self.index_dir)?;
         Ok(())
     }
@@ -119,6 +132,10 @@ impl SessionLayout {
         &self.patches_dir
     }
 
+    pub fn segments_dir(&self) -> &Path {
+        &self.segments_dir
+    }
+
     pub fn index_dir(&self) -> &Path {
         &self.index_dir
     }
@@ -140,4 +157,10 @@ impl SessionStatus {
 
 fn default_burn_in_enabled() -> bool {
     true
+}
+
+impl Default for RecordingFormat {
+    fn default() -> Self {
+        Self::PatchFrames
+    }
 }

@@ -124,7 +124,7 @@ impl CaptureSource for WindowsCapture {
         .ok()?
         .into_frame()
         .ok()?
-        .resize_nearest(
+        .resize_for_capture(
             self.dimensions.working_width as usize,
             self.dimensions.working_height as usize,
         );

@@ -9,7 +9,7 @@ use crate::index::{
 };
 use crate::logging::StructuredError;
 use crate::recorder::RecordingStats;
-use crate::session::{Manifest, SessionLayout, SessionState, SessionStatus};
+use crate::session::{Manifest, RecordingFormat, SessionLayout, SessionState, SessionStatus};
 
 const COALESCE_WINDOW_MS: u64 = 200;
 const COMPRESSION_FORMAT: &str = "png";
@@ -104,6 +104,7 @@ impl Storage {
             session_id: session_id.to_string(),
             started_at,
             finished_at: None,
+            recording_format: RecordingFormat::PatchFrames,
             display_width: dimensions.display_width,
             display_height: dimensions.display_height,
             working_width: dimensions.working_width,
@@ -433,6 +434,7 @@ fn should_coalesce(
     match previous_last_patch {
         Some(last)
             if last.region.matches_region(patch)
+                && last.region.data == patch.data
                 && timestamp_ms.saturating_sub(last.timestamp_ms) <= COALESCE_WINDOW_MS =>
         {
             true

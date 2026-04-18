@@ -8,6 +8,9 @@ pub enum Command {
     Record {
         session_id: Option<String>,
     },
+    RecordVideo {
+        session_id: Option<String>,
+    },
     View {
         session_id: String,
         bind_addr: String,
@@ -80,6 +83,9 @@ impl CliOptions {
                 "record" => {
                     options.command = Command::Record { session_id: None };
                 }
+                "record-video" => {
+                    options.command = Command::RecordVideo { session_id: None };
+                }
                 "view" => {
                     let session_id = iter
                         .next()
@@ -137,7 +143,7 @@ impl CliOptions {
                     options.output_dir = Some(PathBuf::from(value));
                 }
                 "--session-id" => match &mut options.command {
-                    Command::Record { session_id } => {
+                    Command::Record { session_id } | Command::RecordVideo { session_id } => {
                         *session_id = Some(
                             iter.next()
                                 .ok_or_else(|| "missing value for --session-id".to_string())?,
@@ -156,6 +162,7 @@ impl CliOptions {
                             .ok_or_else(|| "missing value for --bind".to_string())?;
                     }
                     Command::Record { .. }
+                    | Command::RecordVideo { .. }
                     | Command::Desktop { .. }
                     | Command::Pause { .. }
                     | Command::Resume { .. }

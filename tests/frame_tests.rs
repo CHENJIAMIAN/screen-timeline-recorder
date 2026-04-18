@@ -1,17 +1,49 @@
 use screen_timeline_recorder::frame::Frame;
 
 #[test]
-fn resize_nearest_downscales_rgba_frames() {
+fn resize_for_capture_averages_source_pixels_when_downscaling() {
     let mut frame = Frame::solid_rgba(4, 4, [0, 0, 0, 255]);
     frame.set_pixel(0, 0, [255, 0, 0, 255]);
-    frame.set_pixel(2, 0, [0, 255, 0, 255]);
-    frame.set_pixel(0, 2, [0, 0, 255, 255]);
-    frame.set_pixel(2, 2, [255, 255, 0, 255]);
+    frame.set_pixel(1, 0, [0, 255, 0, 255]);
+    frame.set_pixel(0, 1, [0, 0, 255, 255]);
+    frame.set_pixel(1, 1, [255, 255, 255, 255]);
 
-    let resized = frame.resize_nearest(2, 2);
+    let resized = frame.resize_for_capture(2, 2);
 
     assert_eq!(resized.width(), 2);
     assert_eq!(resized.height(), 2);
+    assert_eq!(resized.pixel(0, 0), [128, 128, 128, 255]);
+    assert_eq!(resized.pixel(1, 0), [0, 0, 0, 255]);
+    assert_eq!(resized.pixel(0, 1), [0, 0, 0, 255]);
+    assert_eq!(resized.pixel(1, 1), [0, 0, 0, 255]);
+}
+
+#[test]
+fn resize_for_capture_preserves_uniform_blocks_exactly() {
+    let mut frame = Frame::solid_rgba(4, 4, [0, 0, 0, 255]);
+    for y in 0..2 {
+        for x in 0..2 {
+            frame.set_pixel(x, y, [255, 0, 0, 255]);
+        }
+    }
+    for y in 0..2 {
+        for x in 2..4 {
+            frame.set_pixel(x, y, [0, 255, 0, 255]);
+        }
+    }
+    for y in 2..4 {
+        for x in 0..2 {
+            frame.set_pixel(x, y, [0, 0, 255, 255]);
+        }
+    }
+    for y in 2..4 {
+        for x in 2..4 {
+            frame.set_pixel(x, y, [255, 255, 0, 255]);
+        }
+    }
+
+    let resized = frame.resize_for_capture(2, 2);
+
     assert_eq!(resized.pixel(0, 0), [255, 0, 0, 255]);
     assert_eq!(resized.pixel(1, 0), [0, 255, 0, 255]);
     assert_eq!(resized.pixel(0, 1), [0, 0, 255, 255]);

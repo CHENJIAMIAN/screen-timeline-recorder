@@ -122,6 +122,24 @@ fn parses_record_command_with_explicit_session_id() {
 }
 
 #[test]
+fn parses_record_video_command_with_explicit_session_id() {
+    let options = parse(&[
+        "screen-timeline-recorder",
+        "record-video",
+        "--session-id",
+        "session-video",
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        options.command,
+        Command::RecordVideo {
+            session_id: Some("session-video".to_string()),
+        }
+    );
+}
+
+#[test]
 fn parses_pause_resume_stop_and_status_commands() {
     let pause = parse(&["screen-timeline-recorder", "pause", "session-alpha"]).expect("pause");
     let resume = parse(&["screen-timeline-recorder", "resume", "session-alpha"]).expect("resume");

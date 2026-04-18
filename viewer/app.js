@@ -14,6 +14,8 @@ const state = {
   playbackTimer: null,
   playbackRunning: false,
   playbackLoopEnabled: false,
+  videoSegments: [],
+  activeVideoSegmentIndex: -1,
   sessionFilter: "all",
   autostartFeedbackMessage: null,
   recordingSettingsFeedbackMessage: null,
@@ -22,6 +24,7 @@ const state = {
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+const videoPlayer = document.getElementById("video-player");
 const timestampInput = document.getElementById("timestamp");
 const timestampFriendlyInput = document.getElementById("timestamp-friendly");
 const advancedTimeToggle = document.getElementById("advanced-time-toggle");
@@ -69,6 +72,7 @@ const recordingRefreshButton = document.getElementById("recording-refresh");
 const recordingSaveButton = document.getElementById("recording-save");
 const controlLogic = window.ScreenTimelineControlLogic;
 const sessionListLogic = window.ScreenTimelineSessionListLogic;
+const videoPlaybackLogic = window.ScreenTimelineVideoPlaybackLogic;
 
 const I18N = {
   en: {
@@ -87,7 +91,7 @@ const I18N = {
     pausePlayback: "Pause",
     speed: "Speed",
     loopPlayback: "Loop playback",
-    overlay: "Overlay patches",
+    overlay: "Change overlay (legacy)",
     language: "Language",
     autostartTitle: "Autostart Recording",
     autostartSubtitle: "Automatically start recording after Windows login.",
@@ -109,15 +113,11 @@ const I18N = {
     autostartSaveFailed: "Failed to save autostart settings ({status})",
     autostartUnsupportedNote: "Autostart is only supported on Windows.",
     autostartNote: "Runs a Windows Scheduled Task to start recording after login.",
-    recordingSettingsTitle: "Recording Quality",
-    recordingSettingsSubtitle: "Adjust how often frames are sampled and how much change you keep.",
-    recordingSamplingIntervalLabel: "Sampling interval (ms)",
-    recordingSensitivityModeLabel: "Sensitivity",
-    recordingWorkingScaleLabel: "Working scale",
-    recordingKeyframeIntervalLabel: "Full frame interval (seconds)",
-    recordingBlockWidthLabel: "Block width",
-    recordingBlockHeightLabel: "Block height",
-    recordingBurnInEnabledLabel: "Burn in system time on recorded frames",
+    recordingSettingsTitle: "Video Recording",
+    recordingSettingsSubtitle: "Tune frame interval, capture scale, and time watermark for future video sessions.",
+    recordingSamplingIntervalLabel: "Frame interval (ms)",
+    recordingWorkingScaleLabel: "Capture scale",
+    recordingBurnInEnabledLabel: "Burn in wall-clock time on recorded video",
     recordingRefresh: "Refresh",
     recordingSave: "Save",
     recordingLoading: "Loading recording settings...",
@@ -126,7 +126,7 @@ const I18N = {
     recordingRefreshed: "Recording settings refreshed.",
     recordingFailed: "Failed to load recording settings ({status})",
     recordingSaveFailed: "Failed to save recording settings ({status})",
-    recordingNote: "Shorter intervals and higher sensitivity capture more movement but use more CPU and disk.",
+    recordingNote: "Frame interval controls video FPS. Capture scale controls resolution and file size. Time watermark is burned into the recorded video.",
     conservative: "Conservative",
     balanced: "Balanced",
     detailed: "Detailed",
@@ -210,6 +210,8 @@ const I18N = {
     sessionCardSize: "Size {size}",
     statusSummary:
       "Seen {frames} frames ({identical} repeats, {sampled} skipped samples). {diffRuns} diff runs produced {patchFrames} patch frames across {patchRegions} regions and {keyframes} keyframes over {duration}.",
+    videoStatusSummary:
+      "Video session at {width}x{height}. {segments} segments, {size}, duration {duration}.",
   },
   zh: {
     appTitle: "屏幕时间线查看器",
@@ -227,7 +229,7 @@ const I18N = {
     pausePlayback: "暂停",
     speed: "速度",
     loopPlayback: "循环播放",
-    overlay: "高亮变化区域",
+    overlay: "变化高亮（旧格式）",
     language: "语言",
     autostartTitle: "开机自动录制",
     autostartSubtitle: "在 Windows 登录后自动开始录制。",
@@ -249,15 +251,11 @@ const I18N = {
     autostartSaveFailed: "保存自动录制设置失败（{status}）",
     autostartUnsupportedNote: "自动录制目前只支持 Windows。",
     autostartNote: "使用 Windows 计划任务在登录后开始录制。",
-    recordingSettingsTitle: "录制质量",
-    recordingSettingsSubtitle: "调整取帧频率和变化保留强度。",
-    recordingSamplingIntervalLabel: "采样间隔（毫秒）",
-    recordingSensitivityModeLabel: "灵敏度",
-    recordingWorkingScaleLabel: "工作分辨率比例",
-    recordingKeyframeIntervalLabel: "完整画面间隔（秒）",
-    recordingBlockWidthLabel: "块宽",
-    recordingBlockHeightLabel: "块高",
-    recordingBurnInEnabledLabel: "将系统时间烧录进录制画面",
+    recordingSettingsTitle: "视频录制",
+    recordingSettingsSubtitle: "调整后续视频会话的帧间隔、采集比例和时间水印。",
+    recordingSamplingIntervalLabel: "帧间隔（毫秒）",
+    recordingWorkingScaleLabel: "采集比例",
+    recordingBurnInEnabledLabel: "将实际时间烧录进录制视频",
     recordingRefresh: "刷新",
     recordingSave: "保存",
     recordingLoading: "正在加载录制设置...",
@@ -266,7 +264,7 @@ const I18N = {
     recordingRefreshed: "录制设置已刷新。",
     recordingFailed: "加载录制设置失败（{status}）",
     recordingSaveFailed: "保存录制设置失败（{status}）",
-    recordingNote: "更短间隔和更高灵敏度会捕获更多变化，但也会增加 CPU 和硬盘占用。",
+    recordingNote: "帧间隔决定视频帧率，采集比例决定分辨率与文件大小，时间水印会直接烧录进视频画面。",
     conservative: "省资源",
     balanced: "平衡",
     detailed: "更敏感",
@@ -350,6 +348,8 @@ const I18N = {
     sessionCardSize: "大小 {size}",
     statusSummary:
       "这段记录已看到 {frames} 帧，其中 {identical} 帧与上一帧相同、{sampled} 次被快速跳过。系统写入了 {patchFrames} 个变化帧、{patchRegions} 个变化区域和 {keyframes} 个关键帧，当前累计时长 {duration}。",
+    videoStatusSummary:
+      "视频记录 {width}x{height}，共 {segments} 段，大小 {size}，时长 {duration}。",
   },
 };
 
@@ -470,6 +470,67 @@ playbackLoopToggle.addEventListener("change", () => {
   state.playbackLoopEnabled = playbackLoopToggle.checked;
 });
 
+playbackSpeedSelect.addEventListener("change", () => {
+  if (isVideoSession()) {
+    videoPlayer.playbackRate = Number(playbackSpeedSelect.value || 1);
+  }
+});
+
+videoPlayer.addEventListener("play", () => {
+  if (!isVideoSession()) {
+    return;
+  }
+  state.playbackRunning = true;
+  playbackToggleButton.textContent = t("pausePlayback");
+});
+
+videoPlayer.addEventListener("pause", () => {
+  if (!isVideoSession()) {
+    return;
+  }
+  state.playbackRunning = false;
+  playbackToggleButton.textContent = t("play");
+});
+
+videoPlayer.addEventListener("timeupdate", () => {
+  if (!isVideoSession() || state.activeVideoSegmentIndex < 0) {
+    return;
+  }
+
+  const segment = state.videoSegments[state.activeVideoSegmentIndex];
+  if (!segment) {
+    return;
+  }
+
+  const absoluteTimestamp =
+    Number(segment.started_at || 0) + Math.round(Number(videoPlayer.currentTime || 0) * 1000);
+  state.timestampMs = Math.min(sessionEndMs(), Math.max(sessionStartMs(), absoluteTimestamp));
+  syncTimelineControls();
+});
+
+videoPlayer.addEventListener("ended", async () => {
+  if (!isVideoSession()) {
+    return;
+  }
+
+  const nextIndex = state.activeVideoSegmentIndex + 1;
+  if (nextIndex < state.videoSegments.length) {
+    state.timestampMs = Number(state.videoSegments[nextIndex].started_at || sessionStartMs());
+    syncTimelineControls();
+    await loadVideoFrame({ autoplay: true, forceSeek: true, preserveStatus: true });
+    return;
+  }
+
+  if (state.playbackLoopEnabled) {
+    state.timestampMs = sessionStartMs();
+    syncTimelineControls();
+    await loadVideoFrame({ autoplay: true, forceSeek: true, preserveStatus: true });
+    return;
+  }
+
+  stopPlayback();
+});
+
 async function loadSession() {
   stopPlayback();
   applyLanguage();
@@ -491,19 +552,38 @@ async function loadSession() {
 
   canvas.width = state.session.working_width;
   canvas.height = state.session.working_height;
+  syncPlaybackSurface();
   sessionInfo.textContent = t("currentSessionSummary", {
     timestamp: formatClockTimeWithDate(state.session.started_at),
     width: state.session.working_width,
     height: state.session.working_height,
   });
+  sessionInfo.textContent = `${sessionInfo.textContent} | ${formatRecordingFormatLabel(state.session)}`;
 
   await loadSessions();
   await loadStatus();
   await loadAutostart();
   await loadRecordingSettings();
   await loadActivity();
+  if (isVideoSession()) {
+    await loadVideoSegments();
+  } else {
+    state.videoSegments = [];
+    state.activeVideoSegmentIndex = -1;
+  }
   startStatusPolling();
   await loadFrame({ preserveStatus: true });
+}
+
+async function loadVideoSegments() {
+  const response = await fetch(apiUrl("/api/segments"));
+  if (!response.ok) {
+    state.videoSegments = [];
+    renderLiveStatus();
+    return;
+  }
+  state.videoSegments = await response.json();
+  renderLiveStatus();
 }
 
 async function loadAutostart() {
@@ -564,11 +644,7 @@ async function loadRecordingSettings() {
 async function saveRecordingSettings() {
   const params = new URLSearchParams({
     sampling_interval_ms: String(Number(recordingSamplingIntervalInput.value || 0)),
-    sensitivity_mode: recordingSensitivityModeInput.value || "balanced",
     working_scale: String(Number(recordingWorkingScaleInput.value || 0)),
-    keyframe_interval_ms: String(Number(recordingKeyframeIntervalInput.value || 0) * 1000),
-    block_width: String(Number(recordingBlockWidthInput.value || 0)),
-    block_height: String(Number(recordingBlockHeightInput.value || 0)),
     burn_in_enabled: String(recordingBurnInEnabledInput.checked),
   });
 
@@ -740,6 +816,10 @@ async function loadActivity() {
 
 async function loadFrame(options = {}) {
   if (!state.session) return;
+  if (isVideoSession()) {
+    await loadVideoFrame(options);
+    return;
+  }
   const preserveStatus = Boolean(options.preserveStatus);
   const silent = state.playbackRunning;
   if (!silent && !preserveStatus) {
@@ -775,6 +855,73 @@ async function loadFrame(options = {}) {
   img.src = imageUrl;
 }
 
+async function loadVideoFrame(options = {}) {
+  if (!videoPlaybackLogic) {
+    return;
+  }
+  const preserveStatus = Boolean(options.preserveStatus);
+  const autoplay = options.autoplay ?? state.playbackRunning;
+  const silent = Boolean(autoplay);
+  if (!silent && !preserveStatus) {
+    setStatusKey("loadingFrame", { timestamp: formatTimelineLabel(state.timestampMs) });
+  }
+
+  const segmentIndex = findVideoSegmentIndex(state.timestampMs);
+  if (segmentIndex < 0) {
+    if (!preserveStatus) {
+      setStatusKey("failedFrame", { status: 404 });
+    }
+    return;
+  }
+
+  const segment = state.videoSegments[segmentIndex];
+  const targetTime = videoPlaybackLogic.getVideoTargetTimeSeconds(segment, state.timestampMs);
+  const source = apiUrl(`/${segment.relative_path}`);
+  const needsSourceSwap =
+    state.activeVideoSegmentIndex !== segmentIndex || !videoPlayer.src.endsWith(source);
+
+  if (needsSourceSwap) {
+    state.activeVideoSegmentIndex = segmentIndex;
+    videoPlayer.src = source;
+    await new Promise((resolve, reject) => {
+      const onLoaded = () => {
+        videoPlayer.removeEventListener("loadedmetadata", onLoaded);
+        videoPlayer.removeEventListener("error", onError);
+        resolve();
+      };
+      const onError = () => {
+        videoPlayer.removeEventListener("loadedmetadata", onLoaded);
+        videoPlayer.removeEventListener("error", onError);
+        reject(new Error("video load failed"));
+      };
+      videoPlayer.addEventListener("loadedmetadata", onLoaded);
+      videoPlayer.addEventListener("error", onError);
+      videoPlayer.load();
+    }).catch(() => null);
+  }
+
+  if (
+    Number.isFinite(targetTime) &&
+    (options.forceSeek ||
+      needsSourceSwap ||
+      videoPlaybackLogic.shouldSeekVideo(videoPlayer.currentTime, targetTime))
+  ) {
+    try {
+      videoPlayer.currentTime = targetTime;
+    } catch (_) {}
+  }
+  videoPlayer.playbackRate = Number(playbackSpeedSelect.value || 1);
+  if (autoplay) {
+    await videoPlayer.play().catch(() => null);
+  } else {
+    videoPlayer.pause();
+  }
+
+  if (!silent && !preserveStatus) {
+    setStatusKey("frameLoaded");
+  }
+}
+
 async function drawOverlay() {
   const response = await fetch(apiUrl(`/api/patches?ts=${state.timestampMs}`));
   if (!response.ok) {
@@ -782,10 +929,20 @@ async function drawOverlay() {
     return;
   }
   const patches = await response.json();
+  if (!patches.length) {
+    return;
+  }
+  const latestTimestamp = patches.reduce(
+    (maxTimestamp, patch) => Math.max(maxTimestamp, Number(patch.timestamp_ms) || 0),
+    0
+  );
+  const visiblePatches = patches.filter(
+    (patch) => Number(patch.timestamp_ms) === latestTimestamp
+  );
   ctx.save();
   ctx.strokeStyle = "rgba(255, 145, 0, 0.28)";
   ctx.lineWidth = 0.5;
-  for (const patch of patches) {
+  for (const patch of visiblePatches) {
     ctx.strokeRect(patch.x + 0.25, patch.y + 0.25, Math.max(0, patch.width - 0.5), Math.max(0, patch.height - 0.5));
   }
   ctx.restore();
@@ -809,14 +966,17 @@ function renderSessionList() {
     .map((group) => {
       const cards = group.sessions
         .map((session) => {
-      const isCurrent = session.session_id === state.currentSessionId;
-      const liveState = sessionListState(session);
-      return `
+          const isCurrent = session.session_id === state.currentSessionId;
+          const liveState = sessionListState(session);
+          const formatLabel = formatRecordingFormatLabel(session);
+          const formatKey = session.recording_format === "video-segments" ? "video" : "legacy";
+          return `
         <article class="session-card${isCurrent ? " current" : ""}">
           <button class="session-card-open" data-session-id="${escapeHtml(session.session_id)}" title="${escapeHtml(session.session_id)}" type="button">
             <span class="session-card-title">${escapeHtml(formatSessionCardTitle(session.started_at))}</span>
             <span class="session-card-subtitle">${escapeHtml(formatSessionCardSubtitle(session))}</span>
             <span class="session-card-body">
+            <span class="session-format-badge" data-format="${formatKey}">${escapeHtml(formatLabel)}</span>
             <span class="session-card-duration">${escapeHtml(
               t("sessionCardDuration", { duration: formatDuration(session.finished_at ?? session.last_activity_at, session.started_at) })
             )}</span>
@@ -954,6 +1114,12 @@ function togglePlayback() {
 
 function startPlayback() {
   stopPlayback();
+  if (isVideoSession()) {
+    state.playbackRunning = true;
+    playbackToggleButton.textContent = t("pausePlayback");
+    void loadVideoFrame({ autoplay: true, preserveStatus: true });
+    return;
+  }
   state.playbackRunning = true;
   playbackToggleButton.textContent = t("pausePlayback");
   const stepMs = playbackStepMs();
@@ -983,6 +1149,12 @@ function stopPlayback() {
     window.clearInterval(state.playbackTimer);
     state.playbackTimer = null;
   }
+  if (isVideoSession()) {
+    state.playbackRunning = false;
+    videoPlayer.pause();
+    playbackToggleButton.textContent = t("play");
+    return;
+  }
   state.playbackRunning = false;
   playbackToggleButton.textContent = t("play");
 }
@@ -1005,6 +1177,18 @@ function renderLiveStatus() {
   const liveState = normalizeStatusState(state.liveStatus);
   recordingBadge.textContent = formatStatusLabel(liveState);
   recordingBadge.dataset.state = liveState;
+  if (isVideoSession()) {
+    const currentSession = state.sessions.find((session) => session.session_id === state.currentSessionId);
+    statusSummary.textContent = t("videoStatusSummary", {
+      width: state.session ? state.session.working_width : 0,
+      height: state.session ? state.session.working_height : 0,
+      segments: state.videoSegments.length,
+      size: formatBytes(currentSession ? currentSession.total_bytes || 0 : 0),
+      duration: formatElapsed(Math.max(0, stats.finished_at - stats.started_at)),
+    });
+    syncControlButtons(liveState);
+    return;
+  }
   statusSummary.textContent = t("statusSummary", {
     frames: stats.frames_seen,
     identical: stats.identical_frames_skipped,
@@ -1078,13 +1262,7 @@ function renderRecordingSettings() {
   }
 
   recordingSamplingIntervalInput.value = String(state.recordingSettings.sampling_interval_ms ?? 500);
-  recordingSensitivityModeInput.value = state.recordingSettings.sensitivity_mode || "balanced";
   recordingWorkingScaleInput.value = String(state.recordingSettings.working_scale ?? 0.5);
-  recordingKeyframeIntervalInput.value = String(
-    Math.max(1, Math.round(Number(state.recordingSettings.keyframe_interval_ms || 60_000) / 1000))
-  );
-  recordingBlockWidthInput.value = String(state.recordingSettings.block_width ?? 32);
-  recordingBlockHeightInput.value = String(state.recordingSettings.block_height ?? 32);
   recordingBurnInEnabledInput.checked = Boolean(state.recordingSettings.burn_in_enabled ?? true);
 }
 
@@ -1142,6 +1320,28 @@ function renderActivityStrip() {
       return `<span class="activity-marker${isCurrent ? " current" : ""}" style="left:${leftPercent}%"></span>`;
     })
     .join("");
+}
+
+function isVideoSession() {
+  return state.session && state.session.recording_format === "video-segments";
+}
+
+function syncPlaybackSurface() {
+  const showVideo = isVideoSession();
+  videoPlayer.classList.toggle("hidden", !showVideo);
+  canvas.classList.toggle("hidden", showVideo);
+  overlayToggle.disabled = showVideo;
+}
+
+function findVideoSegmentIndex(timestampMs) {
+  if (!videoPlaybackLogic) {
+    return -1;
+  }
+  return videoPlaybackLogic.findVideoSegmentIndex(
+    state.videoSegments,
+    timestampMs,
+    sessionEndMs()
+  );
 }
 
 function sessionStartMs() {
@@ -1281,6 +1481,12 @@ function formatSessionCardTitle(timestampMs) {
 
 function formatSessionCardSubtitle(session) {
   return `${session.working_width}x${session.working_height} | ${formatSessionStart(session.started_at)}`;
+}
+
+function formatRecordingFormatLabel(session) {
+  return session && session.recording_format === "video-segments"
+    ? "Video Session"
+    : "Legacy Patch Session";
 }
 
 function formatTimelineLabel(timestampMs) {
@@ -1456,7 +1662,10 @@ function applyLanguage() {
   document.getElementById("next").textContent = t("next");
   document.getElementById("speed-label").textContent = t("speed");
   document.getElementById("playback-loop-label").textContent = t("loopPlayback");
-  document.getElementById("overlay-label").textContent = t("overlay");
+  const overlayLabel = document.getElementById("overlay-label");
+  if (overlayLabel) {
+    overlayLabel.textContent = t("overlay");
+  }
   document.getElementById("language-label").textContent = t("language");
   document.getElementById("autostart-title").textContent = t("autostartTitle");
   document.getElementById("autostart-subtitle").textContent = t("autostartSubtitle");
@@ -1471,19 +1680,12 @@ function applyLanguage() {
   document.getElementById("recording-settings-title").textContent = t("recordingSettingsTitle");
   document.getElementById("recording-settings-subtitle").textContent = t("recordingSettingsSubtitle");
   document.getElementById("recording-sampling-interval-label").textContent = t("recordingSamplingIntervalLabel");
-  document.getElementById("recording-sensitivity-mode-label").textContent = t("recordingSensitivityModeLabel");
   document.getElementById("recording-working-scale-label").textContent = t("recordingWorkingScaleLabel");
-  document.getElementById("recording-keyframe-interval-label").textContent = t("recordingKeyframeIntervalLabel");
-  document.getElementById("recording-block-width-label").textContent = t("recordingBlockWidthLabel");
-  document.getElementById("recording-block-height-label").textContent = t("recordingBlockHeightLabel");
   document.getElementById("recording-burn-in-enabled-label").textContent = t("recordingBurnInEnabledLabel");
   recordingRefreshButton.textContent = t("recordingRefresh");
   if (!recordingSaveButton.disabled) {
     recordingSaveButton.textContent = t("recordingSave");
   }
-  document.querySelector('#recording-sensitivity-mode option[value="conservative"]').textContent = t("conservative");
-  document.querySelector('#recording-sensitivity-mode option[value="balanced"]').textContent = t("balanced");
-  document.querySelector('#recording-sensitivity-mode option[value="detailed"]').textContent = t("detailed");
   document.getElementById("quickstart-title").textContent = t("quickstartTitle");
   document.getElementById("quickstart-subtitle").textContent = t("quickstartSubtitle");
   document.getElementById("quickstart-step1-title").textContent = t("quickstartStep1Title");
@@ -1517,6 +1719,7 @@ function applyLanguage() {
       width: state.session.working_width,
       height: state.session.working_height,
     });
+    sessionInfo.textContent = `${sessionInfo.textContent} | ${formatRecordingFormatLabel(state.session)}`;
   }
   if (!state.liveStatus) {
     recordingBadge.textContent = t("checking");

@@ -4,6 +4,7 @@ use screen_timeline_recorder::{
     config::{RecorderConfig, SensitivityMode},
     frame::Frame,
     index::{load_keyframe_index, load_patch_index},
+    reconstruct::Reconstructor,
     recorder::{Recorder, RecordingStats},
     session::{SessionState, SessionStatus},
 };
@@ -26,8 +27,21 @@ fn dimensions() -> CaptureDimensions {
     }
 }
 
+fn burn_in_dimensions() -> CaptureDimensions {
+    CaptureDimensions {
+        display_width: 200,
+        display_height: 80,
+        working_width: 200,
+        working_height: 80,
+    }
+}
+
 fn solid_frame(color: [u8; 4]) -> Frame {
     Frame::solid_rgba(8, 8, color)
+}
+
+fn burn_in_frame(color: [u8; 4]) -> Frame {
+    Frame::solid_rgba(200, 80, color)
 }
 
 fn captured(timestamp_ms: u64, frame: Frame) -> CapturedFrame {
@@ -255,6 +269,119 @@ fn run_until_with_stats_reports_skip_and_patch_counts() {
             finished_at: 3_000,
         }
     );
+}
+
+#[test]
+fn burn_in_timestamp_change_forces_patch_across_second_boundary() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let mut config = config_for(temp_dir.path());
+    config.keyframe_interval_ms = 10_000;
+
+    let base = burn_in_frame([0, 0, 0, 255]);
+    let capture = MockCapture::new(
+        burn_in_dimensions(),
+        vec![
+            captured(1_900, base.clone()),
+            captured(2_100, base),
+        ],
+    );
+
+    let recorder = Recorder::new(config, "session-burn-in-second-change", capture);
+    let storage = recorder.run().expect("run recorder");
+
+    let patches = load_patch_index(storage.layout().index_dir()).expect("load patch index");
+    assert_eq!(
+        patches.len(),
+        1,
+        "cross-second burn-in watermark changes must be persisted"
+    );
+}
+
+#[test]
+fn replay_stays_correct_when_early_changes_were_delayed_by_stability_filter() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let mut config = config_for(temp_dir.path());
+    config.keyframe_interval_ms = 10_000;
+    config.burn_in_enabled = false;
+    config.sensitivity_mode = SensitivityMode::Balanced;
+
+    let base = Frame::solid_rgba(8, 8, [0, 0, 0, 255]);
+    let mut frame_two = base.clone();
+    for y in 0..4 {
+        for x in 0..4 {
+            frame_two.set_pixel(x, y, [255, 0, 0, 255]);
+        }
+    }
+
+    let mut frame_three = frame_two.clone();
+    for y in 4..8 {
+        for x in 4..8 {
+            frame_three.set_pixel(x, y, [0, 255, 0, 255]);
+        }
+    }
+
+    let capture = MockCapture::new(
+        dimensions(),
+        vec![
+            captured(1_000, base),
+            captured(2_000, frame_two),
+            captured(3_000, frame_three.clone()),
+            captured(4_000, frame_three.clone()),
+        ],
+    );
+
+    let recorder = Recorder::new(config, "session-stability-replay", capture);
+    let storage = recorder.run().expect("run recorder");
+
+    let reconstructor =
+        Reconstructor::open(temp_dir.path(), "session-stability-replay").expect("open");
+    let reconstructed = reconstructor.reconstruct_at(4_000).expect("reconstruct");
+
+    assert_eq!(
+        reconstructed, frame_three,
+        "replay must reflect the full persisted visual state after delayed patches"
+    );
+
+    let patches = load_patch_index(storage.layout().index_dir()).expect("load patch index");
+    assert_eq!(patches.len(), 2);
+}
+
+#[test]
+fn replay_stays_correct_for_sparse_text_like_changes_in_balanced_mode() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let mut config = config_for(temp_dir.path());
+    config.keyframe_interval_ms = 10_000;
+    config.burn_in_enabled = false;
+    config.sensitivity_mode = SensitivityMode::Balanced;
+
+    let base = Frame::solid_rgba(8, 8, [0, 0, 0, 255]);
+    let mut changed = base.clone();
+    changed.set_pixel(1, 1, [255, 255, 255, 255]);
+    changed.set_pixel(6, 6, [255, 255, 255, 255]);
+
+    let capture = MockCapture::new(
+        dimensions(),
+        vec![
+            captured(1_000, base),
+            captured(2_000, changed.clone()),
+            captured(3_000, changed.clone()),
+        ],
+    );
+
+    let recorder = Recorder::new(config, "session-sparse-balanced", capture);
+    let storage = recorder.run().expect("run recorder");
+
+    let reconstructor =
+        Reconstructor::open(temp_dir.path(), "session-sparse-balanced").expect("open");
+    let reconstructed = reconstructor.reconstruct_at(3_000).expect("reconstruct");
+
+    assert_eq!(
+        reconstructed, changed,
+        "balanced mode must not drop sparse stable changes and leave stale content behind"
+    );
+
+    let patches = load_patch_index(storage.layout().index_dir()).expect("load patch index");
+    assert_eq!(patches.len(), 2);
 }
 
 #[test]

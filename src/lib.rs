@@ -18,3 +18,5 @@ pub mod session_control;
 pub mod storage;
 pub mod viewer_api;
 pub mod viewer_server;
+pub mod video_recorder;
+pub mod video_session;

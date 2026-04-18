@@ -284,7 +284,7 @@ fn start_new_recording(output_dir: &Path) -> Result<String, String> {
     let mut command = Command::new(exe_path);
     command
         .creation_flags(CREATE_NO_WINDOW)
-        .arg("record")
+        .arg("record-video")
         .arg("--session-id")
         .arg(&session_id)
         .arg("--output-dir")

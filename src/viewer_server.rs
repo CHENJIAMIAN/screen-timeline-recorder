@@ -5,6 +5,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use serde::Serialize;
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
@@ -18,7 +21,11 @@ use crate::session_control::{
 };
 use crate::viewer_api::{
     get_activity, get_frame_png, get_patches, get_session, get_sessions, get_status,
+    get_video_segments,
 };
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentType {
@@ -27,6 +34,7 @@ pub enum ContentType {
     Css,
     Json,
     Png,
+    Mp4,
     Text,
 }
 
@@ -38,6 +46,7 @@ impl ContentType {
             Self::Css => "text/css; charset=utf-8",
             Self::Json => "application/json; charset=utf-8",
             Self::Png => "image/png",
+            Self::Mp4 => "video/mp4",
             Self::Text => "text/plain; charset=utf-8",
         }
     }
@@ -87,7 +96,13 @@ impl ViewerServer {
             "/session_list_logic.js" => {
                 self.serve_static("session_list_logic.js", ContentType::JavaScript)
             }
+            "/video_playback_logic.js" => {
+                self.serve_static("video_playback_logic.js", ContentType::JavaScript)
+            }
             "/styles.css" => self.serve_static("styles.css", ContentType::Css),
+            route if route.starts_with("/segments/") => {
+                self.serve_session_asset(route, session_id, ContentType::Mp4)
+            }
             "/api/session" => {
                 let session =
                     get_session(&self.output_dir, session_id).map_err(|err| err.to_string())?;
@@ -135,6 +150,16 @@ impl ViewerServer {
                 let activity =
                     get_activity(&self.output_dir, session_id).map_err(|err| err.to_string())?;
                 let body = serde_json::to_vec(&activity).map_err(|err| err.to_string())?;
+                Ok(ViewerResponse {
+                    status_code: 200,
+                    content_type: ContentType::Json,
+                    body,
+                })
+            }
+            "/api/segments" => {
+                let segments =
+                    get_video_segments(&self.output_dir, session_id).map_err(|err| err.to_string())?;
+                let body = serde_json::to_vec(&segments).map_err(|err| err.to_string())?;
                 Ok(ViewerResponse {
                     status_code: 200,
                     content_type: ContentType::Json,
@@ -200,6 +225,26 @@ impl ViewerServer {
         content_type: ContentType,
     ) -> Result<ViewerResponse, String> {
         let path = self.viewer_dir.join(relative_path);
+        let body = fs::read(path).map_err(|err| err.to_string())?;
+        Ok(ViewerResponse {
+            status_code: 200,
+            content_type,
+            body,
+        })
+    }
+
+    fn serve_session_asset(
+        &self,
+        route: &str,
+        session_id: &str,
+        content_type: ContentType,
+    ) -> Result<ViewerResponse, String> {
+        let relative = route.trim_start_matches('/');
+        let path = self
+            .output_dir
+            .join("sessions")
+            .join(session_id)
+            .join(relative);
         let body = fs::read(path).map_err(|err| err.to_string())?;
         Ok(ViewerResponse {
             status_code: 200,
@@ -341,8 +386,11 @@ impl ViewerServer {
                 .as_millis()
         );
         let exe_path = std::env::current_exe().map_err(|err| err.to_string())?;
-        Command::new(exe_path)
-            .arg("record")
+        let mut command = Command::new(exe_path);
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+            .arg(recording_start_subcommand())
             .arg("--session-id")
             .arg(&session_id)
             .arg("--output-dir")
@@ -351,6 +399,10 @@ impl ViewerServer {
             .map_err(|err| format!("failed to start a new recording: {err}"))?;
         Ok(session_id)
     }
+}
+
+pub(crate) fn recording_start_subcommand() -> &'static str {
+    "record-video"
 }
 
 fn resolve_viewer_dir() -> PathBuf {
@@ -585,7 +637,10 @@ fn error_control_response(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_viewer_dir;
+    use super::{recording_start_subcommand, resolve_viewer_dir};
+
+    #[cfg(windows)]
+    use super::CREATE_NO_WINDOW;
 
     #[test]
     fn resolve_viewer_dir_falls_back_to_manifest_viewer() {
@@ -596,5 +651,16 @@ mod tests {
             viewer_dir.file_name().and_then(|name| name.to_str()),
             Some("viewer")
         );
+    }
+
+    #[test]
+    fn control_start_uses_video_recording_subcommand() {
+        assert_eq!(recording_start_subcommand(), "record-video");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn control_start_uses_no_window_creation_flag() {
+        assert_eq!(CREATE_NO_WINDOW, 0x0800_0000);
     }
 }

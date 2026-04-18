@@ -167,13 +167,13 @@ impl RecorderConfig {
             SensitivityMode::Balanced => Thresholds {
                 precheck_threshold: 0.01,
                 block_difference_threshold: 0.05,
-                changed_pixel_ratio_threshold: 0.1,
+                changed_pixel_ratio_threshold: 0.0,
                 stability_window: 2,
             },
             SensitivityMode::Detailed => Thresholds {
                 precheck_threshold: 0.005,
                 block_difference_threshold: 0.02,
-                changed_pixel_ratio_threshold: 0.05,
+                changed_pixel_ratio_threshold: 0.0,
                 stability_window: 1,
             },
         }
@@ -224,23 +224,23 @@ fn default_output_dir() -> PathBuf {
 }
 
 fn default_sampling_interval_ms() -> u64 {
-    500
+    100
 }
 
 fn default_block_width() -> u32 {
-    32
+    16
 }
 
 fn default_block_height() -> u32 {
-    32
+    16
 }
 
 fn default_keyframe_interval_ms() -> u64 {
-    60_000
+    30_000
 }
 
 fn default_working_scale() -> f32 {
-    0.5
+    1.0
 }
 
 fn default_viewer_default_zoom() -> f32 {

@@ -7,6 +7,7 @@ use screen_timeline_recorder::{
     recorder::record_command_with_stats,
     retention::enforce_retention,
     session_control::{pause_session, render_status_json, resume_session, stop_session},
+    video_recorder::record_video_command,
     viewer_api::get_sessions,
     viewer_server::ViewerServer,
 };
@@ -56,6 +57,13 @@ fn main() {
                     eprintln!("{error}");
                     std::process::exit(1);
                 }
+            }
+        }
+        Command::RecordVideo { session_id } => {
+            let session_id = session_id.clone().unwrap_or_else(default_session_id);
+            if let Err(error) = record_video_command(config, &session_id) {
+                eprintln!("{error}");
+                std::process::exit(1);
             }
         }
         Command::View {

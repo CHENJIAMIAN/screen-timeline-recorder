@@ -4,7 +4,7 @@ use screen_timeline_recorder::{
     diff::PatchRegion,
     frame::Frame,
     recorder::RecordingStats,
-    session::SessionState,
+    session::{RecordingFormat, SessionState},
     storage::{SessionDimensions, Storage},
     viewer_api::{get_activity, get_frame_png, get_patches, get_session, get_sessions, get_status},
 };
@@ -35,6 +35,7 @@ fn session_payload_matches_manifest() {
     assert_eq!(session.session_id, storage.manifest().session_id);
     assert_eq!(session.started_at, storage.manifest().started_at);
     assert_eq!(session.finished_at, storage.manifest().finished_at);
+    assert_eq!(session.recording_format, RecordingFormat::PatchFrames);
     assert_eq!(session.display_width, storage.manifest().display_width);
     assert_eq!(session.display_height, storage.manifest().display_height);
     assert_eq!(session.working_width, storage.manifest().working_width);
@@ -225,9 +226,11 @@ fn sessions_endpoint_lists_sessions_sorted_by_recency() {
     assert_eq!(sessions.len(), 2);
     assert_eq!(sessions[0].session_id, "session-alpha");
     assert_eq!(sessions[0].last_activity_at, 6_000);
+    assert_eq!(sessions[0].recording_format, RecordingFormat::PatchFrames);
     assert!(sessions[0].total_bytes > 0);
     assert_eq!(sessions[1].session_id, "session-beta");
     assert_eq!(sessions[1].last_activity_at, 4_000);
+    assert_eq!(sessions[1].recording_format, RecordingFormat::PatchFrames);
 }
 
 #[test]

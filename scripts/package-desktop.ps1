@@ -25,23 +25,29 @@ if (-not (Test-Path $exePath)) {
 }
 
 $distRoot = Join-Path $repoRoot "dist\desktop"
+if (Test-Path $distRoot) {
+  Remove-Item -LiteralPath $distRoot -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $distRoot | Out-Null
 $distExe = Join-Path $distRoot "screen-timeline-recorder.exe"
 Copy-Item -Force $exePath $distExe
 
 $viewerSource = Join-Path $repoRoot "viewer"
 $viewerDest = Join-Path $distRoot "viewer"
-if (Test-Path $viewerDest) {
-  Remove-Item -Recurse -Force $viewerDest
-}
 Copy-Item -Recurse -Force $viewerSource $viewerDest
 
 $iconSourceDir = Join-Path $repoRoot "icons"
 $iconDestDir = Join-Path $distRoot "icons"
-if (Test-Path $iconDestDir) {
-  Remove-Item -Recurse -Force $iconDestDir
-}
 Copy-Item -Recurse -Force $iconSourceDir $iconDestDir
+
+$ffmpegSourceDir = Join-Path $repoRoot "target\$profile\ffmpeg"
+if (-not (Test-Path $ffmpegSourceDir)) {
+  $ffmpegSourceDir = Join-Path $repoRoot "tools\ffmpeg"
+}
+if (Test-Path $ffmpegSourceDir) {
+  $ffmpegDestDir = Join-Path $distRoot "ffmpeg"
+  Copy-Item -Recurse -Force $ffmpegSourceDir $ffmpegDestDir
+}
 
 $readmePath = Join-Path $distRoot "README.txt"
 $readmeLines = @(
@@ -69,6 +75,9 @@ $readmeLines = @(
   "- Ctrl+Alt+Shift+R: Start new recording"
   "- Ctrl+Alt+Shift+P: Pause or resume active recording"
   "- Ctrl+Alt+Shift+S: Stop active recording"
+  ""
+  "Bundled video recorder:"
+  "- ffmpeg is expected under .\ffmpeg\ffmpeg.exe for video-segment recording."
   ""
   "Autostart note:"
   "- The web UI can configure login startup to launch the desktop shell in background mode."

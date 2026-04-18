@@ -85,14 +85,14 @@ fn persists_manifest_with_required_fields() {
     assert_eq!(manifest.display_height, 1080);
     assert_eq!(manifest.working_width, 960);
     assert_eq!(manifest.working_height, 540);
-    assert_eq!(manifest.sampling_interval_ms, 500);
-    assert_eq!(manifest.block_width, 32);
-    assert_eq!(manifest.block_height, 32);
-    assert_eq!(manifest.keyframe_interval_ms, 60_000);
+    assert_eq!(manifest.sampling_interval_ms, 100);
+    assert_eq!(manifest.block_width, 16);
+    assert_eq!(manifest.block_height, 16);
+    assert_eq!(manifest.keyframe_interval_ms, 30_000);
     assert_eq!(manifest.sensitivity_mode, "balanced");
     assert_eq!(manifest.precheck_threshold, 0.01);
     assert_eq!(manifest.block_difference_threshold, 0.05);
-    assert_eq!(manifest.changed_pixel_ratio_threshold, 0.1);
+    assert_eq!(manifest.changed_pixel_ratio_threshold, 0.0);
     assert_eq!(manifest.stability_window, 2);
     assert_eq!(manifest.compression_format, "png");
     assert_eq!(manifest.recorder_version, env!("CARGO_PKG_VERSION"));
@@ -207,6 +207,42 @@ fn coalesces_rapid_repeated_region_writes() {
     let patches_path = storage.layout().index_dir().join("patches.jsonl");
     let contents = fs::read_to_string(patches_path).expect("read patches index");
     assert_eq!(contents.lines().count(), 1);
+}
+
+#[test]
+fn does_not_coalesce_repeated_region_writes_when_pixel_data_changes() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let mut storage = start_storage(temp_dir.path());
+
+    let first_patch = PatchRegion {
+        x: 10,
+        y: 20,
+        width: 16,
+        height: 16,
+        data: vec![9_u8, 9, 9, 255].repeat(16 * 16),
+    };
+    let second_patch = PatchRegion {
+        x: 10,
+        y: 20,
+        width: 16,
+        height: 16,
+        data: vec![200_u8, 1, 1, 255].repeat(16 * 16),
+    };
+
+    storage
+        .write_patches(1_700_000_001_000, &[first_patch])
+        .expect("write first patch");
+    storage
+        .write_patches(1_700_000_001_050, &[second_patch])
+        .expect("write second patch");
+
+    let patches_path = storage.layout().index_dir().join("patches.jsonl");
+    let contents = fs::read_to_string(patches_path).expect("read patches index");
+    assert_eq!(
+        contents.lines().count(),
+        2,
+        "same region with different pixels must not be coalesced"
+    );
 }
 
 #[test]

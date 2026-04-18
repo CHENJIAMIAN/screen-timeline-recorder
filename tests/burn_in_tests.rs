@@ -74,3 +74,14 @@ fn burn_timestamp_overlay_paints_background_box_and_text() {
         "overlay should paint at least one glyph pixel"
     );
 }
+
+#[test]
+fn burn_timestamp_overlay_changes_pixels_when_second_changes() {
+    let mut first = Frame::solid_rgba(200, 80, [0, 0, 0, 255]);
+    let mut second = first.clone();
+
+    burn_timestamp_overlay(&mut first, 1_900);
+    burn_timestamp_overlay(&mut second, 2_100);
+
+    assert_ne!(first.as_rgba(), second.as_rgba());
+}

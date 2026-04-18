@@ -16,12 +16,12 @@ fn default_configuration_values() {
     let config = RecorderConfig::default();
 
     assert_eq!(config.output_dir, PathBuf::from("output"));
-    assert_eq!(config.sampling_interval_ms, 500);
-    assert_eq!(config.block_width, 32);
-    assert_eq!(config.block_height, 32);
-    assert_eq!(config.keyframe_interval_ms, 60_000);
+    assert_eq!(config.sampling_interval_ms, 100);
+    assert_eq!(config.block_width, 16);
+    assert_eq!(config.block_height, 16);
+    assert_eq!(config.keyframe_interval_ms, 30_000);
     assert_eq!(config.sensitivity_mode, SensitivityMode::Balanced);
-    assert_f32_eq(config.working_scale, 0.5);
+    assert_f32_eq(config.working_scale, 1.0);
     assert_f32_eq(config.viewer_default_zoom, 1.0);
     assert!(config.viewer_overlay_enabled_by_default);
     assert!(config.burn_in_enabled);
@@ -43,7 +43,7 @@ block_width = 16
 block_height = 16
 keyframe_interval_ms = 120000
 sensitivity_mode = "detailed"
-working_scale = 0.75
+working_scale = 1.0
 viewer_default_zoom = 1.25
 viewer_overlay_enabled_by_default = false
 burn_in_enabled = false
@@ -64,7 +64,7 @@ max_total_bytes = 1048576
     assert_eq!(config.block_height, 16);
     assert_eq!(config.keyframe_interval_ms, 120_000);
     assert_eq!(config.sensitivity_mode, SensitivityMode::Detailed);
-    assert_f32_eq(config.working_scale, 0.75);
+    assert_f32_eq(config.working_scale, 1.0);
     assert_f32_eq(config.viewer_default_zoom, 1.25);
     assert!(!config.viewer_overlay_enabled_by_default);
     assert!(!config.burn_in_enabled);
@@ -135,7 +135,7 @@ fn maps_sensitivity_mode_to_thresholds() {
         Thresholds {
             precheck_threshold: 0.01,
             block_difference_threshold: 0.05,
-            changed_pixel_ratio_threshold: 0.1,
+            changed_pixel_ratio_threshold: 0.0,
             stability_window: 2,
         }
     );
@@ -146,7 +146,7 @@ fn maps_sensitivity_mode_to_thresholds() {
         Thresholds {
             precheck_threshold: 0.005,
             block_difference_threshold: 0.02,
-            changed_pixel_ratio_threshold: 0.05,
+            changed_pixel_ratio_threshold: 0.0,
             stability_window: 1,
         }
     );

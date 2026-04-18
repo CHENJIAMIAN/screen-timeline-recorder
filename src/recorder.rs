@@ -1,8 +1,9 @@
 use crate::{
-    burn_in::burn_timestamp_overlay,
+    burn_in::{burn_timestamp_overlay, timestamp_overlay_bounds},
     capture::{CaptureSource, CapturedFrame},
     config::RecorderConfig,
-    diff::{DiffEngine, DiffError},
+    diff::{DiffEngine, DiffError, PatchRegion},
+    frame::Frame,
     session::{SessionLayout, SessionState},
     storage::{SessionDimensions, Storage, StorageError},
 };
@@ -17,6 +18,10 @@ use std::time::Duration;
 const CONSERVATIVE_SAMPLE_GRID: usize = 8;
 const BALANCED_SAMPLE_GRID: usize = 12;
 const DETAILED_SAMPLE_GRID: usize = 16;
+
+fn timestamp_second_changed(previous_timestamp_ms: u64, current_timestamp_ms: u64) -> bool {
+    previous_timestamp_ms / 1_000 != current_timestamp_ms / 1_000
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RecordingStats {
@@ -243,7 +248,7 @@ impl<C: CaptureSource> Recorder<C> {
         };
         storage.write_status(SessionState::Running, &stats)?;
 
-        let mut last_frame = first.frame;
+        let mut persisted_frame = first.frame;
         let mut last_timestamp = first.timestamp_ms;
         let mut last_keyframe_ms = last_timestamp;
 
@@ -265,17 +270,23 @@ impl<C: CaptureSource> Recorder<C> {
             }
             stats.frames_seen += 1;
 
-            if last_frame.as_rgba() != frame.frame.as_rgba() {
-                let sampled_difference =
-                    last_frame.sampled_difference_ratio(&frame.frame, sample_grid, sample_grid);
+            if persisted_frame.as_rgba() != frame.frame.as_rgba() {
+                let burn_in_second_changed = self.config.burn_in_enabled
+                    && timestamp_second_changed(last_timestamp, frame.timestamp_ms);
+                let sampled_difference = persisted_frame
+                    .sampled_difference_ratio(&frame.frame, sample_grid, sample_grid);
 
-                if sampled_difference >= sampled_precheck_threshold {
+                if burn_in_second_changed || sampled_difference >= sampled_precheck_threshold {
                     stats.diff_runs += 1;
-                    let diff = diff_engine.diff(&last_frame, &frame.frame)?;
+                    let mut diff = diff_engine.diff(&persisted_frame, &frame.frame)?;
+                    if burn_in_second_changed {
+                        append_burn_in_overlay_patch_if_needed(&mut diff.patches, &frame.frame, frame.timestamp_ms);
+                    }
                     if !diff.patches.is_empty() {
                         stats.patch_frames_written += 1;
                         stats.patch_regions_written += diff.patches.len() as u64;
                         storage.write_patches(frame.timestamp_ms, &diff.patches)?;
+                        apply_patches_to_frame(&mut persisted_frame, &diff.patches);
                     }
                 } else {
                     stats.sampled_precheck_skipped += 1;
@@ -289,9 +300,9 @@ impl<C: CaptureSource> Recorder<C> {
                 storage.write_keyframe(frame.timestamp_ms, &payload)?;
                 last_keyframe_ms = frame.timestamp_ms;
                 stats.keyframes_written += 1;
+                persisted_frame = frame.frame.clone();
             }
 
-            last_frame = frame.frame;
             last_timestamp = frame.timestamp_ms;
             stats.finished_at = last_timestamp;
             storage.write_status(SessionState::Running, &stats)?;
@@ -334,5 +345,56 @@ fn sample_grid_size(config: &RecorderConfig) -> usize {
         crate::config::SensitivityMode::Conservative => CONSERVATIVE_SAMPLE_GRID,
         crate::config::SensitivityMode::Balanced => BALANCED_SAMPLE_GRID,
         crate::config::SensitivityMode::Detailed => DETAILED_SAMPLE_GRID,
+    }
+}
+
+fn append_burn_in_overlay_patch_if_needed(
+    patches: &mut Vec<PatchRegion>,
+    frame: &Frame,
+    timestamp_ms: u64,
+) {
+    let timestamp_text = crate::burn_in::format_timestamp_to_seconds(timestamp_ms);
+    let Some(bounds) = timestamp_overlay_bounds(frame, &timestamp_text) else {
+        return;
+    };
+    let overlay_patch = PatchRegion {
+        x: bounds.x as u32,
+        y: bounds.y as u32,
+        width: bounds.width as u32,
+        height: bounds.height as u32,
+        data: frame.copy_region_rgba(bounds.x, bounds.y, bounds.width, bounds.height),
+    };
+
+    if patches.iter().any(|patch| regions_overlap(patch, &overlay_patch)) {
+        return;
+    }
+
+    patches.push(overlay_patch);
+}
+
+fn regions_overlap(left: &PatchRegion, right: &PatchRegion) -> bool {
+    let left_x2 = left.x + left.width;
+    let left_y2 = left.y + left.height;
+    let right_x2 = right.x + right.width;
+    let right_y2 = right.y + right.height;
+
+    left.x < right_x2 && right.x < left_x2 && left.y < right_y2 && right.y < left_y2
+}
+
+fn apply_patches_to_frame(frame: &mut Frame, patches: &[PatchRegion]) {
+    for patch in patches {
+        let mut cursor = 0usize;
+        for y in patch.y as usize..(patch.y + patch.height) as usize {
+            for x in patch.x as usize..(patch.x + patch.width) as usize {
+                let rgba = [
+                    patch.data[cursor],
+                    patch.data[cursor + 1],
+                    patch.data[cursor + 2],
+                    patch.data[cursor + 3],
+                ];
+                frame.set_pixel(x, y, rgba);
+                cursor += 4;
+            }
+        }
     }
 }

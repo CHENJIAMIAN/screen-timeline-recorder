@@ -78,7 +78,7 @@ fn tiny_sub_threshold_changes_are_ignored() {
 }
 
 #[test]
-fn changed_pixel_ratio_threshold_is_enforced() {
+fn stable_sparse_changes_are_preserved_after_stability_window() {
     let mut config = RecorderConfig::default();
     config.block_width = 4;
     config.block_height = 4;
@@ -88,9 +88,15 @@ fn changed_pixel_ratio_threshold_is_enforced() {
     let mut current = previous.clone();
     current.set_pixel(0, 0, [255, 255, 255, 255]);
 
-    let result = engine.diff(&previous, &current).expect("diff result");
+    let first = engine.diff(&previous, &current).expect("first diff");
+    let second = engine.diff(&previous, &current).expect("second diff");
 
-    assert!(result.patches.is_empty());
+    assert!(first.patches.is_empty());
+    assert_eq!(second.patches.len(), 1);
+    assert_eq!(second.patches[0].x, 0);
+    assert_eq!(second.patches[0].y, 0);
+    assert_eq!(second.patches[0].width, 1);
+    assert_eq!(second.patches[0].height, 1);
 }
 
 #[test]

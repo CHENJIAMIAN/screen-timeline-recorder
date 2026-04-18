@@ -12,28 +12,25 @@ const TEXT_COLOR: [u8; 4] = [240, 244, 255, 255];
 const MIN_FRAME_WIDTH: usize = 160;
 const MIN_FRAME_HEIGHT: usize = 32;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverlayBounds {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
 pub fn burn_timestamp_overlay(frame: &mut Frame, timestamp_ms: u64) {
-    if frame.width() < MIN_FRAME_WIDTH || frame.height() < MIN_FRAME_HEIGHT {
+    let Some(text) = overlay_text_for_frame(timestamp_ms, frame.width(), frame.height()) else {
         return;
-    }
-
-    let text = format_timestamp_to_seconds(timestamp_ms);
-    if text.is_empty() || frame.width() == 0 || frame.height() == 0 {
+    };
+    let Some(bounds) = timestamp_overlay_bounds(frame, &text) else {
         return;
-    }
-
+    };
     let glyph_pixel_width = GLYPH_WIDTH * GLYPH_SCALE;
-    let glyph_pixel_height = GLYPH_HEIGHT * GLYPH_SCALE;
-    let text_width = text
-        .chars()
-        .count()
-        .saturating_mul(glyph_pixel_width + GLYPH_SPACING)
-        .saturating_sub(GLYPH_SPACING);
-    let box_width = (text_width + PADDING_X * 2).min(frame.width());
-    let box_height = (glyph_pixel_height + PADDING_Y * 2).min(frame.height());
 
-    for y in 0..box_height {
-        for x in 0..box_width {
+    for y in bounds.y..(bounds.y + bounds.height) {
+        for x in bounds.x..(bounds.x + bounds.width) {
             frame.set_pixel(x, y, BACKGROUND_COLOR);
         }
     }
@@ -47,6 +44,31 @@ pub fn burn_timestamp_overlay(frame: &mut Frame, timestamp_ms: u64) {
             break;
         }
     }
+}
+
+pub fn timestamp_overlay_bounds(frame: &Frame, text: &str) -> Option<OverlayBounds> {
+    if frame.width() < MIN_FRAME_WIDTH || frame.height() < MIN_FRAME_HEIGHT {
+        return None;
+    }
+
+    if text.is_empty() || frame.width() == 0 || frame.height() == 0 {
+        return None;
+    }
+
+    let glyph_pixel_width = GLYPH_WIDTH * GLYPH_SCALE;
+    let glyph_pixel_height = GLYPH_HEIGHT * GLYPH_SCALE;
+    let text_width = text
+        .chars()
+        .count()
+        .saturating_mul(glyph_pixel_width + GLYPH_SPACING)
+        .saturating_sub(GLYPH_SPACING);
+
+    Some(OverlayBounds {
+        x: 0,
+        y: 0,
+        width: (text_width + PADDING_X * 2).min(frame.width()),
+        height: (glyph_pixel_height + PADDING_Y * 2).min(frame.height()),
+    })
 }
 
 fn draw_char(frame: &mut Frame, ch: char, origin_x: usize, origin_y: usize) {
@@ -71,7 +93,11 @@ fn draw_char(frame: &mut Frame, ch: char, origin_x: usize, origin_y: usize) {
     }
 }
 
-fn format_timestamp_to_seconds(timestamp_ms: u64) -> String {
+pub fn format_timestamp_to_seconds(timestamp_ms: u64) -> String {
+    format_timestamp_pattern(timestamp_ms, "%Y-%m-%d %H:%M:%S")
+}
+
+fn format_timestamp_pattern(timestamp_ms: u64, pattern: &str) -> String {
     let timestamp_ms = i64::try_from(timestamp_ms).ok();
     let Some(timestamp_ms) = timestamp_ms else {
         return String::new();
@@ -83,7 +109,33 @@ fn format_timestamp_to_seconds(timestamp_ms: u64) -> String {
         LocalResult::None => return String::new(),
     };
 
-    local_time.format("%Y-%m-%d %H:%M:%S").to_string()
+    local_time.format(pattern).to_string()
+}
+
+fn overlay_text_for_frame(timestamp_ms: u64, frame_width: usize, frame_height: usize) -> Option<String> {
+    if frame_width < MIN_FRAME_WIDTH || frame_height < MIN_FRAME_HEIGHT {
+        return None;
+    }
+
+    let candidates = [
+        "%Y-%m-%d %H:%M:%S",
+        "%m-%d %H:%M:%S",
+        "%H:%M:%S",
+        "%M:%S",
+    ];
+
+    candidates
+        .into_iter()
+        .map(|pattern| format_timestamp_pattern(timestamp_ms, pattern))
+        .find(|text| overlay_text_width(text) + PADDING_X * 2 <= frame_width)
+}
+
+fn overlay_text_width(text: &str) -> usize {
+    let glyph_pixel_width = GLYPH_WIDTH * GLYPH_SCALE;
+    text.chars()
+        .count()
+        .saturating_mul(glyph_pixel_width + GLYPH_SPACING)
+        .saturating_sub(GLYPH_SPACING)
 }
 
 fn glyph_rows(ch: char) -> [u8; GLYPH_HEIGHT] {
@@ -131,7 +183,7 @@ fn glyph_rows(ch: char) -> [u8; GLYPH_HEIGHT] {
 
 #[cfg(test)]
 mod tests {
-    use super::format_timestamp_to_seconds;
+    use super::{format_timestamp_to_seconds, overlay_text_for_frame};
     use chrono::{Local, TimeZone};
 
     #[test]
@@ -145,5 +197,12 @@ mod tests {
             .to_string();
 
         assert_eq!(format_timestamp_to_seconds(timestamp_ms as u64), expected);
+    }
+
+    #[test]
+    fn narrows_overlay_text_to_fit_smaller_frames() {
+        let text = overlay_text_for_frame(1_777_777_777_000_u64, 200, 80).expect("overlay text");
+        assert_eq!(text.len(), 14);
+        assert!(text.contains(':'));
     }
 }

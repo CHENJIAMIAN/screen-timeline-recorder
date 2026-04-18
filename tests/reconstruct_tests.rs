@@ -151,6 +151,50 @@ fn replays_patches_in_timestamp_and_sequence_order() {
 }
 
 #[test]
+fn reconstructs_latest_pixels_for_same_region_when_written_rapidly() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let mut storage = start_storage(temp_dir.path());
+    let base = Frame::solid_rgba(4, 4, [0, 0, 0, 255]);
+    storage
+        .write_keyframe(100, base.as_rgba())
+        .expect("write keyframe");
+
+    storage
+        .write_patches(
+            110,
+            &[PatchRegion {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4,
+                data: vec![10, 0, 0, 255].repeat(16),
+            }],
+        )
+        .expect("write first patch");
+    storage
+        .write_patches(
+            120,
+            &[PatchRegion {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4,
+                data: vec![200, 0, 0, 255].repeat(16),
+            }],
+        )
+        .expect("write second patch");
+
+    let reconstructor = Reconstructor::open(temp_dir.path(), "2026-04-13").expect("open");
+    let reconstructed = reconstructor.reconstruct_at(120).expect("reconstruct");
+
+    for y in 0..4 {
+        for x in 0..4 {
+            assert_eq!(reconstructed.pixel(x, y), [200, 0, 0, 255]);
+        }
+    }
+}
+
+#[test]
 fn reconstructs_legacy_raw_session_data() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let session_root = temp_dir.path().join("sessions").join("legacy-raw");
@@ -162,18 +206,19 @@ fn reconstructs_legacy_raw_session_data() {
         session_id: "legacy-raw".to_string(),
         started_at: 100,
         finished_at: Some(120),
+        recording_format: screen_timeline_recorder::session::RecordingFormat::PatchFrames,
         display_width: 4,
         display_height: 4,
         working_width: 4,
         working_height: 4,
-        sampling_interval_ms: 500,
-        block_width: 32,
-        block_height: 32,
-        keyframe_interval_ms: 60_000,
+        sampling_interval_ms: 300,
+        block_width: 16,
+        block_height: 16,
+        keyframe_interval_ms: 30_000,
         sensitivity_mode: "balanced".to_string(),
         precheck_threshold: 0.01,
         block_difference_threshold: 0.05,
-        changed_pixel_ratio_threshold: 0.1,
+        changed_pixel_ratio_threshold: 0.0,
         stability_window: 2,
         compression_format: "raw".to_string(),
         recorder_version: "0.1.0".to_string(),
