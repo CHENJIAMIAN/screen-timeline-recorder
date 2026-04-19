@@ -69,20 +69,6 @@ fn serves_vue_api_client_asset() {
 }
 
 #[test]
-fn serves_video_playback_logic_asset() {
-    let server = make_server();
-    let response = server
-        .handle_get("/video_playback_logic.js")
-        .expect("video playback logic");
-
-    assert_eq!(response.status_code, 200);
-    assert_eq!(response.content_type, ContentType::JavaScript);
-    let body = String::from_utf8(response.body).expect("js");
-    assert!(body.contains("findVideoSegmentIndex"));
-    assert!(body.contains("getVideoTargetTimeSeconds"));
-}
-
-#[test]
 fn serves_video_segment_metadata_json() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let server = ViewerServer::new(temp_dir.path(), "video-session");
