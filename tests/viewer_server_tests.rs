@@ -14,35 +14,12 @@ fn serves_index_html_for_root() {
     assert_eq!(response.content_type, ContentType::Html);
     let body = String::from_utf8(response.body).expect("html");
     assert!(body.contains("Screen Timeline Viewer"));
-    assert!(body.contains("Live Status"));
-    assert!(body.contains("id=\"session-list\""));
-    assert!(body.contains("id=\"video-player\""));
-    assert!(body.contains("id=\"viewer-player-panel\""));
-    assert!(body.contains("video_playback_logic.js"));
-    assert!(body.contains("id=\"playback-speed\""));
-    assert!(body.contains("id=\"playback-loop\""));
-    assert!(body.contains("id=\"playback-loop-label\""));
-    assert!(body.contains("id=\"control-start\""));
-    assert!(body.contains("id=\"control-stop\""));
-    assert!(body.contains("id=\"autostart-settings\""));
-    assert!(body.contains("id=\"recording-settings\""));
-    assert!(body.contains("id=\"recording-sampling-interval\""));
-    assert!(body.contains("id=\"recording-working-scale\""));
-    assert!(body.contains("id=\"recording-burn-in-enabled\""));
+    assert!(body.contains("id=\"app\""));
+    assert!(body.contains("<script type=\"module\" src=\"app.js\"></script>"));
+    assert!(!body.contains("id=\"timeline\""));
+    assert!(!body.contains("id=\"canvas\""));
     assert!(!body.contains("id=\"control-pause\""));
     assert!(!body.contains("id=\"control-resume\""));
-    assert!(!body.contains("id=\"timeline\""));
-    assert!(!body.contains("id=\"activity-strip\""));
-    assert!(!body.contains("id=\"play-pause\""));
-    assert!(!body.contains("id=\"timestamp-friendly\""));
-    assert!(!body.contains("id=\"advanced-time-toggle\""));
-    assert!(!body.contains("id=\"timestamp-help\""));
-    assert!(!body.contains("id=\"timestamp\""));
-    assert!(!body.contains("id=\"overlay\""));
-    assert!(!body.contains("id=\"canvas\""));
-    assert!(!body.contains("id=\"load\""));
-    assert!(!body.contains("id=\"prev\""));
-    assert!(!body.contains("id=\"next\""));
 }
 
 #[test]
@@ -53,16 +30,42 @@ fn serves_static_assets_by_name() {
     assert_eq!(response.status_code, 200);
     assert_eq!(response.content_type, ContentType::JavaScript);
     let body = String::from_utf8(response.body).expect("js");
+    assert!(body.contains("vue.esm-browser.prod.js"));
+    assert!(body.contains("viewer_app.js"));
+}
+
+#[test]
+fn serves_vue_viewer_module_asset() {
+    let server = make_server();
+    let response = server
+        .handle_get("/viewer_app.js")
+        .expect("viewer_app.js response");
+
+    assert_eq!(response.status_code, 200);
+    assert_eq!(response.content_type, ContentType::JavaScript);
+    let body = String::from_utf8(response.body).expect("js");
     assert!(body.contains("loadSession"));
-    assert!(body.contains("/api/status"));
-    assert!(body.contains("/api/sessions"));
-    assert!(body.contains("/api/control"));
-    assert!(body.contains("/api/segments"));
+    assert!(body.contains("fetchControl"));
+    assert!(body.contains("fetchJson"));
     assert!(body.contains("loadVideoSegments"));
     assert!(body.contains("applyPlaybackPreferences"));
+}
+
+#[test]
+fn serves_vue_api_client_asset() {
+    let server = make_server();
+    let response = server
+        .handle_get("/api_client.js")
+        .expect("api_client.js response");
+
+    assert_eq!(response.status_code, 200);
+    assert_eq!(response.content_type, ContentType::JavaScript);
+    let body = String::from_utf8(response.body).expect("js");
+    assert!(body.contains("/api/control"));
+    assert!(body.contains("/api/autostart/save"));
+    assert!(body.contains("/api/recording-settings/save"));
     assert!(!body.contains("/api/frame"));
     assert!(!body.contains("/api/patches"));
-    assert!(!body.contains("syncTimelineControls"));
 }
 
 #[test]

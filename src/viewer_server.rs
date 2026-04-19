@@ -20,8 +20,7 @@ use crate::session_control::{
     SessionControlError, delete_session, pause_session, resume_session, stop_session,
 };
 use crate::viewer_api::{
-    get_activity, get_frame_png, get_patches, get_session, get_sessions, get_status,
-    get_video_segments,
+    get_activity, get_session, get_sessions, get_status, get_video_segments,
 };
 
 #[cfg(windows)]
@@ -33,7 +32,6 @@ pub enum ContentType {
     JavaScript,
     Css,
     Json,
-    Png,
     Mp4,
     Text,
 }
@@ -45,7 +43,6 @@ impl ContentType {
             Self::JavaScript => "application/javascript; charset=utf-8",
             Self::Css => "text/css; charset=utf-8",
             Self::Json => "application/json; charset=utf-8",
-            Self::Png => "image/png",
             Self::Mp4 => "video/mp4",
             Self::Text => "text/plain; charset=utf-8",
         }
@@ -91,15 +88,9 @@ impl ViewerServer {
         let session_id = session_id_from_query(query).unwrap_or(&self.session_id);
         match route {
             "/" => self.serve_static("index.html", ContentType::Html),
-            "/app.js" => self.serve_static("app.js", ContentType::JavaScript),
-            "/control_logic.js" => self.serve_static("control_logic.js", ContentType::JavaScript),
-            "/session_list_logic.js" => {
-                self.serve_static("session_list_logic.js", ContentType::JavaScript)
+            route if route.ends_with(".js") || route.ends_with(".css") => {
+                self.serve_viewer_asset(route)
             }
-            "/video_playback_logic.js" => {
-                self.serve_static("video_playback_logic.js", ContentType::JavaScript)
-            }
-            "/styles.css" => self.serve_static("styles.css", ContentType::Css),
             route if route.starts_with("/segments/") => {
                 self.serve_session_asset(route, session_id, ContentType::Mp4)
             }
@@ -160,27 +151,6 @@ impl ViewerServer {
                 let segments =
                     get_video_segments(&self.output_dir, session_id).map_err(|err| err.to_string())?;
                 let body = serde_json::to_vec(&segments).map_err(|err| err.to_string())?;
-                Ok(ViewerResponse {
-                    status_code: 200,
-                    content_type: ContentType::Json,
-                    body,
-                })
-            }
-            "/api/frame" => {
-                let timestamp_ms = parse_timestamp(query)?;
-                let body = get_frame_png(&self.output_dir, session_id, timestamp_ms)
-                    .map_err(|err| err.to_string())?;
-                Ok(ViewerResponse {
-                    status_code: 200,
-                    content_type: ContentType::Png,
-                    body,
-                })
-            }
-            "/api/patches" => {
-                let timestamp_ms = parse_timestamp(query)?;
-                let patches = get_patches(&self.output_dir, session_id, timestamp_ms)
-                    .map_err(|err| err.to_string())?;
-                let body = serde_json::to_vec(&patches).map_err(|err| err.to_string())?;
                 Ok(ViewerResponse {
                     status_code: 200,
                     content_type: ContentType::Json,
@@ -251,6 +221,21 @@ impl ViewerServer {
             content_type,
             body,
         })
+    }
+
+    fn serve_viewer_asset(&self, route: &str) -> Result<ViewerResponse, String> {
+        let relative = route.trim_start_matches('/');
+        if relative.contains("..") {
+            return Err("invalid asset path".to_string());
+        }
+
+        let content_type = if relative.ends_with(".css") {
+            ContentType::Css
+        } else {
+            ContentType::JavaScript
+        };
+
+        self.serve_static(relative, content_type)
     }
 
     fn handle_control(&self, query: &str, session_id: &str) -> Result<ViewerResponse, String> {
@@ -425,19 +410,6 @@ fn split_path_and_query(path: &str) -> (&str, &str) {
     }
 }
 
-fn parse_timestamp(query: &str) -> Result<u64, String> {
-    for pair in query.split('&') {
-        if let Some((key, value)) = pair.split_once('=') {
-            if key == "ts" {
-                return value
-                    .parse::<u64>()
-                    .map_err(|_| format!("invalid timestamp: {value}"));
-            }
-        }
-    }
-    Err("missing ts query parameter".to_string())
-}
-
 fn session_id_from_query(query: &str) -> Option<&str> {
     for pair in query.split('&') {
         if let Some((key, value)) = pair.split_once('=') {
@@ -512,21 +484,6 @@ fn recording_settings_from_query(
                         .parse::<u64>()
                         .map_err(|_| format!("invalid sampling_interval_ms: {decoded}"))?;
                 }
-                "block_width" => {
-                    settings.block_width = decoded
-                        .parse::<u32>()
-                        .map_err(|_| format!("invalid block_width: {decoded}"))?;
-                }
-                "block_height" => {
-                    settings.block_height = decoded
-                        .parse::<u32>()
-                        .map_err(|_| format!("invalid block_height: {decoded}"))?;
-                }
-                "keyframe_interval_ms" => {
-                    settings.keyframe_interval_ms = decoded
-                        .parse::<u64>()
-                        .map_err(|_| format!("invalid keyframe_interval_ms: {decoded}"))?;
-                }
                 "working_scale" => {
                     settings.working_scale = decoded
                         .parse::<f32>()
@@ -534,14 +491,6 @@ fn recording_settings_from_query(
                 }
                 "burn_in_enabled" => {
                     settings.burn_in_enabled = parse_bool_flag(&decoded)?;
-                }
-                "sensitivity_mode" => {
-                    settings.sensitivity_mode = match decoded.as_str() {
-                        "conservative" => crate::config::SensitivityMode::Conservative,
-                        "balanced" => crate::config::SensitivityMode::Balanced,
-                        "detailed" => crate::config::SensitivityMode::Detailed,
-                        _ => return Err(format!("invalid sensitivity_mode: {decoded}")),
-                    };
                 }
                 _ => {}
             }
@@ -637,10 +586,13 @@ fn error_control_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{recording_start_subcommand, resolve_viewer_dir};
+    use super::{
+        recording_settings_from_query, recording_start_subcommand, resolve_viewer_dir,
+    };
 
     #[cfg(windows)]
     use super::CREATE_NO_WINDOW;
+    use crate::recording_settings::RecordingSettings;
 
     #[test]
     fn resolve_viewer_dir_falls_back_to_manifest_viewer() {
@@ -656,6 +608,25 @@ mod tests {
     #[test]
     fn control_start_uses_video_recording_subcommand() {
         assert_eq!(recording_start_subcommand(), "record-video");
+    }
+
+    #[test]
+    fn recording_settings_query_only_updates_supported_video_fields() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = recording_settings_from_query(
+            "sampling_interval_ms=750&working_scale=0.6&burn_in_enabled=0&block_width=8&block_height=8&keyframe_interval_ms=12000&sensitivity_mode=detailed",
+            temp_dir.path(),
+        )
+        .expect("parse recording settings");
+        let defaults = RecordingSettings::defaults();
+
+        assert_eq!(settings.sampling_interval_ms, 750);
+        assert_eq!(settings.working_scale, 0.6);
+        assert!(!settings.burn_in_enabled);
+        assert_eq!(settings.block_width, defaults.block_width);
+        assert_eq!(settings.block_height, defaults.block_height);
+        assert_eq!(settings.keyframe_interval_ms, defaults.keyframe_interval_ms);
+        assert_eq!(settings.sensitivity_mode, defaults.sensitivity_mode);
     }
 
     #[cfg(windows)]
