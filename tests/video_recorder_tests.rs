@@ -122,3 +122,17 @@ fn build_video_segment_index_uses_segment_duration_and_file_sizes() {
     assert_eq!(entries[1].finished_at, Some(45_000));
     assert_eq!(entries[1].bytes, 17);
 }
+
+#[test]
+fn video_layout_creation_skips_legacy_patch_directories() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let layout = SessionLayout::new(temp_dir.path(), "session-video");
+
+    layout.create_video_dirs().expect("create video dirs");
+
+    assert!(layout.root().exists());
+    assert!(layout.segments_dir().exists());
+    assert!(layout.index_dir().exists());
+    assert!(!layout.keyframes_dir().exists());
+    assert!(!layout.patches_dir().exists());
+}

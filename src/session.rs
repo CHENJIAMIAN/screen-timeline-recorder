@@ -104,6 +104,13 @@ impl SessionLayout {
         Ok(())
     }
 
+    pub fn create_video_dirs(&self) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.root)?;
+        std::fs::create_dir_all(&self.segments_dir)?;
+        std::fs::create_dir_all(&self.index_dir)?;
+        Ok(())
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }

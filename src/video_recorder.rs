@@ -25,7 +25,7 @@ pub fn record_video_command(config: RecorderConfig, session_id: &str) -> Result<
         .ok_or_else(|| "ffmpeg sidecar not found; expected ffmpeg\\ffmpeg.exe next to the app or SCREEN_TIMELINE_FFMPEG".to_string())?;
 
     let layout = SessionLayout::new(&config.output_dir, session_id);
-    layout.create_dirs().map_err(|err| err.to_string())?;
+    layout.create_video_dirs().map_err(|err| err.to_string())?;
 
     let started_at = current_timestamp_ms();
     let display_width = 1920;
