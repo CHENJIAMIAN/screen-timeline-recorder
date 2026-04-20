@@ -90,35 +90,17 @@ fn rejects_autostart_flag_by_default() {
 }
 
 #[test]
-fn parses_explicit_record_command() {
+fn parses_record_video_command_with_output_dir() {
     let options = parse(&[
         "screen-timeline-recorder",
-        "record",
+        "record-video",
         "--output-dir",
         "D:/captures",
     ])
     .expect("parse");
 
-    assert_eq!(options.command, Command::Record { session_id: None });
+    assert_eq!(options.command, Command::RecordVideo { session_id: None });
     assert_eq!(options.output_dir, Some(PathBuf::from("D:/captures")));
-}
-
-#[test]
-fn parses_record_command_with_explicit_session_id() {
-    let options = parse(&[
-        "screen-timeline-recorder",
-        "record",
-        "--session-id",
-        "session-manual",
-    ])
-    .expect("parse");
-
-    assert_eq!(
-        options.command,
-        Command::Record {
-            session_id: Some("session-manual".to_string()),
-        }
-    );
 }
 
 #[test]

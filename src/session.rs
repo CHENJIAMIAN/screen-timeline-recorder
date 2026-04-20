@@ -1,45 +1,12 @@
-use crate::config::ViewerLanguage;
+use crate::recording_stats::RecordingStats;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::recorder::RecordingStats;
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum RecordingFormat {
-    PatchFrames,
     VideoSegments,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Manifest {
-    pub session_id: String,
-    pub started_at: u64,
-    pub finished_at: Option<u64>,
-    #[serde(default)]
-    pub recording_format: RecordingFormat,
-    pub display_width: u32,
-    pub display_height: u32,
-    pub working_width: u32,
-    pub working_height: u32,
-    pub sampling_interval_ms: u64,
-    pub block_width: u32,
-    pub block_height: u32,
-    pub keyframe_interval_ms: u64,
-    pub sensitivity_mode: String,
-    pub precheck_threshold: f32,
-    pub block_difference_threshold: f32,
-    pub changed_pixel_ratio_threshold: f32,
-    pub stability_window: u32,
-    pub compression_format: String,
-    pub recorder_version: String,
-    pub viewer_default_zoom: f32,
-    pub viewer_overlay_enabled_by_default: bool,
-    #[serde(default = "default_burn_in_enabled")]
-    pub burn_in_enabled: bool,
-    #[serde(default)]
-    pub viewer_language: ViewerLanguage,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -57,8 +24,6 @@ pub struct SessionLayout {
     status_path: PathBuf,
     stop_signal_path: PathBuf,
     pause_signal_path: PathBuf,
-    keyframes_dir: PathBuf,
-    patches_dir: PathBuf,
     segments_dir: PathBuf,
     index_dir: PathBuf,
 }
@@ -78,8 +43,6 @@ impl SessionLayout {
         let status_path = root.join("status.json");
         let stop_signal_path = root.join("stop.signal");
         let pause_signal_path = root.join("pause.signal");
-        let keyframes_dir = root.join("keyframes");
-        let patches_dir = root.join("patches");
         let segments_dir = root.join("segments");
         let index_dir = root.join("index");
 
@@ -89,19 +52,9 @@ impl SessionLayout {
             status_path,
             stop_signal_path,
             pause_signal_path,
-            keyframes_dir,
-            patches_dir,
             segments_dir,
             index_dir,
         }
-    }
-
-    pub fn create_dirs(&self) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.keyframes_dir)?;
-        std::fs::create_dir_all(&self.patches_dir)?;
-        std::fs::create_dir_all(&self.segments_dir)?;
-        std::fs::create_dir_all(&self.index_dir)?;
-        Ok(())
     }
 
     pub fn create_video_dirs(&self) -> std::io::Result<()> {
@@ -131,27 +84,12 @@ impl SessionLayout {
         &self.pause_signal_path
     }
 
-    pub fn keyframes_dir(&self) -> &Path {
-        &self.keyframes_dir
-    }
-
-    pub fn patches_dir(&self) -> &Path {
-        &self.patches_dir
-    }
-
     pub fn segments_dir(&self) -> &Path {
         &self.segments_dir
     }
 
     pub fn index_dir(&self) -> &Path {
         &self.index_dir
-    }
-}
-
-impl Manifest {
-    pub fn load(path: &Path) -> Result<Self, std::io::Error> {
-        let contents = std::fs::read_to_string(path)?;
-        serde_json::from_str(&contents).map_err(std::io::Error::other)
     }
 }
 
@@ -162,12 +100,8 @@ impl SessionStatus {
     }
 }
 
-fn default_burn_in_enabled() -> bool {
-    true
-}
-
 impl Default for RecordingFormat {
     fn default() -> Self {
-        Self::PatchFrames
+        Self::VideoSegments
     }
 }

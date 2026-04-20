@@ -1,4 +1,5 @@
 use crate::{
+    autostart::{apply_autostart_settings, get_autostart_status, load_autostart_settings},
     config::{RecorderConfig, ViewerLanguage},
     session_control::{pause_session, read_status, resume_session, stop_session},
     viewer_api::get_sessions,
@@ -19,7 +20,7 @@ use std::{
 use tauri::{
     Manager, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
     image::Image,
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 
@@ -43,6 +44,8 @@ const MENU_START_RECORDING: &str = "start-recording";
 const MENU_PAUSE_RESUME: &str = "pause-resume";
 #[cfg(target_os = "windows")]
 const MENU_STOP_RECORDING: &str = "stop-recording";
+#[cfg(target_os = "windows")]
+const MENU_AUTOSTART_RECORDING: &str = "autostart-recording";
 #[cfg(target_os = "windows")]
 const MENU_QUIT: &str = "quit";
 #[cfg(target_os = "windows")]
@@ -157,18 +160,34 @@ fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
         true,
         None::<&str>,
     )?;
+    let autostart_status = get_autostart_status(&app.state::<DesktopState>().output_dir).ok();
+    let autostart_item = CheckMenuItem::with_id(
+        app,
+        MENU_AUTOSTART_RECORDING,
+        text.autostart_recording,
+        autostart_status
+            .as_ref()
+            .map(|status| status.supported)
+            .unwrap_or(cfg!(windows)),
+        autostart_status
+            .as_ref()
+            .map(|status| status.settings.enabled)
+            .unwrap_or(false),
+        None::<&str>,
+    )?;
     let quit_item = MenuItem::with_id(app, MENU_QUIT, text.quit, true, None::<&str>)?;
     menu.append(&open_ui_item)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&start_item)?;
     menu.append(&pause_resume_item)?;
     menu.append(&stop_item)?;
+    menu.append(&autostart_item)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&quit_item)?;
 
-    let icon = Image::from_path(resolve_icon_path())?;
+    let idle_icon = load_tray_icon()?;
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(icon)
+        .icon(idle_icon.clone())
         .tooltip(text.app_name)
         .show_menu_on_left_click(false)
         .menu(&menu)
@@ -186,6 +205,9 @@ fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
                 }
                 MENU_STOP_RECORDING => {
                     let _ = stop_active_recording(&state.output_dir);
+                }
+                MENU_AUTOSTART_RECORDING => {
+                    let _ = toggle_autostart_recording(&state.output_dir);
                 }
                 MENU_QUIT => {
                     app.exit(0);
@@ -220,6 +242,7 @@ fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
         start_item,
         pause_resume_item,
         stop_item,
+        autostart_item,
     );
     Ok(())
 }
@@ -313,6 +336,17 @@ fn stop_active_recording(output_dir: &Path) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
+fn toggle_autostart_recording(output_dir: &Path) -> Result<(), String> {
+    let mut settings = get_autostart_status(output_dir)
+        .map_err(|err| err.to_string())?
+        .settings;
+    settings.enabled = !settings.enabled;
+    apply_autostart_settings(output_dir, &settings)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+#[cfg(target_os = "windows")]
 fn active_recording_session_id(output_dir: &Path) -> Option<String> {
     get_sessions(output_dir)
         .ok()?
@@ -334,7 +368,11 @@ fn spawn_tray_status_updater<R: tauri::Runtime>(
     start_item: MenuItem<R>,
     pause_resume_item: MenuItem<R>,
     stop_item: MenuItem<R>,
+    autostart_item: CheckMenuItem<R>,
 ) {
+    let idle_icon = load_tray_icon().ok();
+    let recording_icon = idle_icon.as_ref().map(make_recording_tray_icon);
+    let paused_icon = idle_icon.as_ref().map(make_paused_tray_icon);
     thread::spawn(move || {
         loop {
             let output_dir = {
@@ -346,6 +384,18 @@ fn spawn_tray_status_updater<R: tauri::Runtime>(
             let status = recording_status_summary(&output_dir, language);
             if let Some(tray) = app.tray_by_id(TRAY_ID) {
                 let _ = tray.set_tooltip(Some(status.tooltip.clone()));
+                let icon = if status.recording {
+                    if status.paused {
+                        paused_icon.as_ref()
+                    } else {
+                        recording_icon.as_ref()
+                    }
+                } else {
+                    idle_icon.as_ref()
+                };
+                if let Some(icon) = icon {
+                    let _ = tray.set_icon(Some(icon.clone()));
+                }
             }
             let _ =
                 open_ui_item.set_text(format!("{} ({})", text.open_main_ui, status.short_label));
@@ -359,6 +409,16 @@ fn spawn_tray_status_updater<R: tauri::Runtime>(
             let _ = pause_resume_item.set_text(status.pause_resume_label);
             let _ = stop_item.set_enabled(status.recording);
             let _ = stop_item.set_text(status.stop_label);
+            match load_autostart_settings(&output_dir) {
+                Ok(settings) => {
+                    let _ = autostart_item.set_enabled(cfg!(windows));
+                    let _ = autostart_item.set_checked(settings.enabled);
+                    let _ = autostart_item.set_text(text.autostart_recording);
+                }
+                Err(_) => {
+                    let _ = autostart_item.set_enabled(false);
+                }
+            }
             thread::sleep(Duration::from_secs(2));
         }
     });
@@ -369,6 +429,7 @@ struct RecordingStatusSummary {
     short_label: String,
     tooltip: String,
     recording: bool,
+    paused: bool,
     pause_resume_label: &'static str,
     stop_label: &'static str,
 }
@@ -388,6 +449,7 @@ fn recording_status_summary(
                 short_label: text.short_paused.to_string(),
                 tooltip: format!("{}: {} ({session_id})", text.app_name, text.tooltip_paused),
                 recording: true,
+                paused: true,
                 pause_resume_label: text.resume_recording,
                 stop_label: text.stop_current_recording,
             }
@@ -399,6 +461,7 @@ fn recording_status_summary(
                     text.app_name, text.tooltip_recording
                 ),
                 recording: true,
+                paused: false,
                 pause_resume_label: text.pause_recording,
                 stop_label: text.stop_current_recording,
             }
@@ -408,6 +471,7 @@ fn recording_status_summary(
             short_label: text.short_idle.to_string(),
             tooltip: format!("{}: {}", text.app_name, text.tooltip_idle),
             recording: false,
+            paused: false,
             pause_resume_label: text.pause_resume_none,
             stop_label: text.stop_current_recording_none,
         }
@@ -443,6 +507,7 @@ struct DesktopText {
     pause_resume: &'static str,
     stop_current_recording: &'static str,
     stop_current_recording_none: &'static str,
+    autostart_recording: &'static str,
     quit: &'static str,
     short_idle: &'static str,
     short_recording: &'static str,
@@ -466,6 +531,7 @@ fn desktop_text(language: DesktopLanguage) -> DesktopText {
             pause_resume: "Pause / Resume",
             stop_current_recording: "Stop Current Recording",
             stop_current_recording_none: "Stop Current Recording (None)",
+            autostart_recording: "Autostart Recording After Login",
             quit: "Quit",
             short_idle: "Idle",
             short_recording: "Recording",
@@ -485,6 +551,7 @@ fn desktop_text(language: DesktopLanguage) -> DesktopText {
             pause_resume: "暂停 / 继续",
             stop_current_recording: "停止当前录制",
             stop_current_recording_none: "停止当前录制（无活动录制）",
+            autostart_recording: "开机自动录制",
             quit: "退出",
             short_idle: "空闲",
             short_recording: "录制中",
@@ -538,6 +605,56 @@ fn resolve_icon_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("icons")
         .join("icon.ico")
+}
+
+#[cfg(target_os = "windows")]
+fn load_tray_icon() -> tauri::Result<Image<'static>> {
+    Image::from_path(resolve_icon_path()).map(Image::to_owned)
+}
+
+#[cfg(target_os = "windows")]
+fn make_recording_tray_icon(base: &Image<'_>) -> Image<'static> {
+    make_status_tray_icon(base, [0xE6, 0x3B, 0x2E, 0xFF])
+}
+
+#[cfg(target_os = "windows")]
+fn make_paused_tray_icon(base: &Image<'_>) -> Image<'static> {
+    make_status_tray_icon(base, [0xF5, 0x9E, 0x0B, 0xFF])
+}
+
+#[cfg(target_os = "windows")]
+fn make_status_tray_icon(base: &Image<'_>, color: [u8; 4]) -> Image<'static> {
+    let width = base.width() as usize;
+    let height = base.height() as usize;
+    let mut rgba = base.rgba().to_vec();
+    let radius = (width.min(height) / 5).max(3) as i32;
+    let cx = width as i32 - radius - 3;
+    let cy = radius + 3;
+    let border = 1.max(radius / 4);
+    for y in 0..height as i32 {
+        for x in 0..width as i32 {
+            let dx = x - cx;
+            let dy = y - cy;
+            let dist2 = dx * dx + dy * dy;
+            if dist2 > radius * radius {
+                continue;
+            }
+            let idx = ((y as usize * width) + x as usize) * 4;
+            let is_border = dist2 >= (radius - border) * (radius - border);
+            if is_border {
+                rgba[idx] = 255;
+                rgba[idx + 1] = 255;
+                rgba[idx + 2] = 255;
+                rgba[idx + 3] = 255;
+            } else {
+                rgba[idx] = color[0];
+                rgba[idx + 1] = color[1];
+                rgba[idx + 2] = color[2];
+                rgba[idx + 3] = color[3];
+            }
+        }
+    }
+    Image::new_owned(rgba, base.width(), base.height())
 }
 
 #[cfg(not(target_os = "windows"))]

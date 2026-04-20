@@ -50,7 +50,12 @@ fn build_ffmpeg_segment_args_targets_segmented_mp4_output() {
     let joined = args.join(" ");
     assert!(joined.contains("-f gdigrab"));
     assert!(joined.contains("-framerate 10"));
+    assert!(joined.contains("-video_size 1920x1080"));
+    assert!(joined.contains("-rtbufsize 32M"));
     assert!(joined.contains("-vf scale=1440:810"));
+    assert!(joined.contains("-tune zerolatency"));
+    assert!(joined.contains("-threads 2"));
+    assert!(joined.contains("-x264-params rc-lookahead=0:sync-lookahead=0"));
     assert!(joined.contains("-f segment"));
     assert!(joined.contains("-segment_time 30"));
     assert!(joined.contains("segments\\%06d.mp4") || joined.contains("segments/%06d.mp4"));
@@ -124,7 +129,7 @@ fn build_video_segment_index_uses_segment_duration_and_file_sizes() {
 }
 
 #[test]
-fn video_layout_creation_skips_legacy_patch_directories() {
+fn video_layout_creation_only_builds_video_directories() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let layout = SessionLayout::new(temp_dir.path(), "session-video");
 
@@ -133,6 +138,4 @@ fn video_layout_creation_skips_legacy_patch_directories() {
     assert!(layout.root().exists());
     assert!(layout.segments_dir().exists());
     assert!(layout.index_dir().exists());
-    assert!(!layout.keyframes_dir().exists());
-    assert!(!layout.patches_dir().exists());
 }

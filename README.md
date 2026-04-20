@@ -56,7 +56,7 @@ cargo build
 Start recording:
 
 ```powershell
-cargo run -- record --output-dir .\output
+cargo run -- record-video --output-dir .\output
 ```
 
 Open the latest recorded session in the local viewer:
@@ -98,13 +98,7 @@ Default local bind address is `127.0.0.1:8080`.
 
 The UI can configure Windows login autostart through a Scheduled Task. The task launches desktop mode in background mode and can optionally start recording immediately after login.
 
-## Recording Modes
-
-### Frame-Diff Sessions
-
-- GDI `BitBlt` capture on Windows
-- Keyframes plus patch regions
-- Time-indexed reconstruction
+## Recording Format
 
 ### Video-Segment Sessions
 
@@ -130,7 +124,7 @@ If none are configured, recordings accumulate under `output/sessions`.
 Common commands:
 
 ```powershell
-cargo run -- record --output-dir .\output
+cargo run -- record-video --output-dir .\output
 cargo run -- view <session_id> --output-dir .\output
 cargo run -- view-latest --output-dir .\output
 cargo run -- desktop --output-dir .\output

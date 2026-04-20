@@ -1,15 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::config::{RecorderConfig, SensitivityMode};
+use crate::config::RecorderConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RecordingSettings {
     pub sampling_interval_ms: u64,
-    pub block_width: u32,
-    pub block_height: u32,
-    pub keyframe_interval_ms: u64,
-    pub sensitivity_mode: SensitivityMode,
     pub working_scale: f32,
     #[serde(default = "default_burn_in_enabled")]
     pub burn_in_enabled: bool,
@@ -54,10 +50,6 @@ impl RecordingSettings {
     pub fn from_config(config: &RecorderConfig) -> Self {
         Self {
             sampling_interval_ms: config.sampling_interval_ms,
-            block_width: config.block_width,
-            block_height: config.block_height,
-            keyframe_interval_ms: config.keyframe_interval_ms,
-            sensitivity_mode: config.sensitivity_mode,
             working_scale: config.working_scale,
             burn_in_enabled: config.burn_in_enabled,
         }
@@ -65,10 +57,6 @@ impl RecordingSettings {
 
     pub fn apply_to_config(&self, config: &mut RecorderConfig) {
         config.sampling_interval_ms = self.sampling_interval_ms;
-        config.block_width = self.block_width;
-        config.block_height = self.block_height;
-        config.keyframe_interval_ms = self.keyframe_interval_ms;
-        config.sensitivity_mode = self.sensitivity_mode;
         config.working_scale = self.working_scale;
         config.burn_in_enabled = self.burn_in_enabled;
     }

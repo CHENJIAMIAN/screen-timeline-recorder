@@ -61,7 +61,7 @@ $proc = $null
 $session = $null
 
 try {
-  $proc = Start-Process $exe -ArgumentList @("--output-dir", $OutputDir) -WorkingDirectory $repoRoot -PassThru
+  $proc = Start-Process $exe -ArgumentList @("record-video", "--output-dir", $OutputDir) -WorkingDirectory $repoRoot -PassThru
   Write-Host "record pid=$($proc.Id)"
 
   Start-Sleep -Seconds 2
@@ -89,12 +89,16 @@ try {
   $statusJson = & $exe status $session.Name --output-dir $OutputDir | Out-String
   $status = $statusJson | ConvertFrom-Json
   $sizeBytes = Get-DirectorySizeBytes $session.FullName
+  $segmentCount = if (Test-Path (Join-Path $session.FullName "segments")) {
+    (Get-ChildItem (Join-Path $session.FullName "segments") -Filter *.mp4 -File | Measure-Object).Count
+  } else {
+    0
+  }
 
-  Write-Host ("state={0} frames={1} diffs={2} keyframes={3} size_bytes={4}" -f `
+  Write-Host ("state={0} segments={1} finished_at={2} size_bytes={3}" -f `
     $status.state, `
-    $status.stats.frames_seen, `
-    $status.stats.diff_runs, `
-    $status.stats.keyframes_written, `
+    $segmentCount, `
+    $status.stats.finished_at, `
     $sizeBytes)
 }
 finally {

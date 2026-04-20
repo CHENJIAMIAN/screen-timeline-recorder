@@ -5,9 +5,6 @@ use crate::recording_settings::load_recording_settings;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    Record {
-        session_id: Option<String>,
-    },
     RecordVideo {
         session_id: Option<String>,
     },
@@ -64,7 +61,7 @@ fn default_command() -> Command {
 
     #[cfg(not(target_os = "windows"))]
     {
-        Command::Record { session_id: None }
+        Command::RecordVideo { session_id: None }
     }
 }
 
@@ -80,9 +77,6 @@ impl CliOptions {
         let mut current = iter.next();
         while let Some(arg) = current {
             match arg.as_str() {
-                "record" => {
-                    options.command = Command::Record { session_id: None };
-                }
                 "record-video" => {
                     options.command = Command::RecordVideo { session_id: None };
                 }
@@ -143,7 +137,7 @@ impl CliOptions {
                     options.output_dir = Some(PathBuf::from(value));
                 }
                 "--session-id" => match &mut options.command {
-                    Command::Record { session_id } | Command::RecordVideo { session_id } => {
+                    Command::RecordVideo { session_id } => {
                         *session_id = Some(
                             iter.next()
                                 .ok_or_else(|| "missing value for --session-id".to_string())?,
@@ -151,7 +145,8 @@ impl CliOptions {
                     }
                     _ => {
                         return Err(
-                            "--session-id is only valid with the record command".to_string()
+                            "--session-id is only valid with the record-video command"
+                                .to_string(),
                         );
                     }
                 },
@@ -161,8 +156,7 @@ impl CliOptions {
                             .next()
                             .ok_or_else(|| "missing value for --bind".to_string())?;
                     }
-                    Command::Record { .. }
-                    | Command::RecordVideo { .. }
+                    Command::RecordVideo { .. }
                     | Command::Desktop { .. }
                     | Command::Pause { .. }
                     | Command::Resume { .. }

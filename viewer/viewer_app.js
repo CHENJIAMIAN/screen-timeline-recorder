@@ -671,6 +671,12 @@ export function createViewerApp() {
                   <option value="3">3x</option>
                   <option value="4">4x</option>
                   <option value="8">8x</option>
+                  <option value="16">16x</option>
+                  <option value="32">32x</option>
+                  <option value="60">60x</option>
+                  <option value="120">120x</option>
+                  <option value="240">240x</option>
+                  <option value="360">360x</option>
                 </select>
               </label>
               <label class="toggle">

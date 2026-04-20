@@ -17,9 +17,6 @@ name = "screen_timeline_recorder"
 path = "src/lib.rs"
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-ctrlc = "3.4"
-png = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tiny_http = "0.12"

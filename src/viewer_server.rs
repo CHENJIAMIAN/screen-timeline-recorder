@@ -691,19 +691,14 @@ mod tests {
     fn recording_settings_query_only_updates_supported_video_fields() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let settings = recording_settings_from_query(
-            "sampling_interval_ms=750&working_scale=0.6&burn_in_enabled=0&block_width=8&block_height=8&keyframe_interval_ms=12000&sensitivity_mode=detailed",
+            "sampling_interval_ms=750&working_scale=0.6&burn_in_enabled=0",
             temp_dir.path(),
         )
         .expect("parse recording settings");
-        let defaults = RecordingSettings::defaults();
 
         assert_eq!(settings.sampling_interval_ms, 750);
         assert_eq!(settings.working_scale, 0.6);
         assert!(!settings.burn_in_enabled);
-        assert_eq!(settings.block_width, defaults.block_width);
-        assert_eq!(settings.block_height, defaults.block_height);
-        assert_eq!(settings.keyframe_interval_ms, defaults.keyframe_interval_ms);
-        assert_eq!(settings.sensitivity_mode, defaults.sensitivity_mode);
     }
 
     #[cfg(windows)]
@@ -745,7 +740,7 @@ mod tests {
                 session_id: "session-stop".to_string(),
                 state: SessionState::Running,
                 recording: true,
-                stats: crate::recorder::RecordingStats {
+                stats: crate::recording_stats::RecordingStats {
                     started_at: 1000,
                     finished_at: 1000,
                     ..Default::default()
@@ -788,7 +783,7 @@ mod tests {
                     session_id: "session-stop".to_string(),
                     state: SessionState::Stopped,
                     recording: false,
-                    stats: crate::recorder::RecordingStats {
+                    stats: crate::recording_stats::RecordingStats {
                         started_at: 1000,
                         finished_at: 1300,
                         ..Default::default()

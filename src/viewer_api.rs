@@ -1,16 +1,10 @@
 use crate::config::ViewerLanguage;
+use crate::session::{RecordingFormat, SessionLayout, SessionState, SessionStatus};
+use crate::video_session::{VideoSegmentEntry, VideoSessionManifest, load_video_segment_index};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::{fs, path::PathBuf};
-
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-use crate::diff::PatchRegion;
-use crate::index::{IndexError, load_patch_index, nearest_keyframe, patch_entries_between};
-use crate::reconstruct::{ReconstructError, Reconstructor};
-use crate::session::{Manifest, RecordingFormat, SessionLayout, SessionState, SessionStatus};
-use crate::storage::{StorageError, read_patch_region};
-use crate::video_session::{VideoSegmentEntry, VideoSessionManifest, load_video_segment_index};
+use std::time::UNIX_EPOCH;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionResponse {
@@ -23,14 +17,6 @@ pub struct SessionResponse {
     pub working_width: u32,
     pub working_height: u32,
     pub sampling_interval_ms: u64,
-    pub block_width: u32,
-    pub block_height: u32,
-    pub keyframe_interval_ms: u64,
-    pub sensitivity_mode: String,
-    pub precheck_threshold: f32,
-    pub block_difference_threshold: f32,
-    pub changed_pixel_ratio_threshold: f32,
-    pub stability_window: u32,
     pub compression_format: String,
     pub recorder_version: String,
     pub viewer_default_zoom: f32,
@@ -62,16 +48,6 @@ pub struct SessionStatusInfo {
     pub last_activity_at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct PatchMetadata {
-    pub timestamp_ms: u64,
-    pub sequence: u64,
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityPoint {
     pub timestamp_ms: u64,
@@ -90,24 +66,12 @@ pub struct VideoSegmentResponse {
 #[derive(Debug)]
 pub enum ViewerApiError {
     Io(std::io::Error),
-    Reconstruct(ReconstructError),
-    Storage(StorageError),
-    Index(IndexError),
-    Png(png::EncodingError),
-    MissingKeyframe(u64),
 }
 
 impl std::fmt::Display for ViewerApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(err) => write!(f, "viewer api io error: {err}"),
-            Self::Reconstruct(err) => write!(f, "{err}"),
-            Self::Storage(err) => write!(f, "{err}"),
-            Self::Index(err) => write!(f, "{err}"),
-            Self::Png(err) => write!(f, "png encoding error: {err}"),
-            Self::MissingKeyframe(timestamp_ms) => {
-                write!(f, "no keyframe available for timestamp {timestamp_ms}")
-            }
         }
     }
 }
@@ -117,30 +81,6 @@ impl std::error::Error for ViewerApiError {}
 impl From<std::io::Error> for ViewerApiError {
     fn from(err: std::io::Error) -> Self {
         Self::Io(err)
-    }
-}
-
-impl From<ReconstructError> for ViewerApiError {
-    fn from(err: ReconstructError) -> Self {
-        Self::Reconstruct(err)
-    }
-}
-
-impl From<StorageError> for ViewerApiError {
-    fn from(err: StorageError) -> Self {
-        Self::Storage(err)
-    }
-}
-
-impl From<IndexError> for ViewerApiError {
-    fn from(err: IndexError) -> Self {
-        Self::Index(err)
-    }
-}
-
-impl From<png::EncodingError> for ViewerApiError {
-    fn from(err: png::EncodingError) -> Self {
-        Self::Png(err)
     }
 }
 
@@ -170,14 +110,15 @@ pub fn get_sessions(output_dir: &Path) -> Result<Vec<SessionListEntry>, ViewerAp
         let session = load_session_response(&manifest_path)?;
         let layout = SessionLayout::new(output_dir, &session.session_id);
         let status = viewer_safe_status_info(&layout);
+        let finished_at = resolved_session_finished_at(&session, &layout, status.as_ref());
         let last_activity_at = status
             .as_ref()
             .map(|status| status.last_activity_at)
-            .unwrap_or_else(|| session.finished_at.unwrap_or(session.started_at));
+            .unwrap_or_else(|| finished_at.unwrap_or(session.started_at));
         sessions.push(SessionListEntry {
             session_id: session.session_id,
             started_at: session.started_at,
-            finished_at: session.finished_at,
+            finished_at,
             last_activity_at,
             recording_format: session.recording_format,
             display_width: session.display_width,
@@ -199,72 +140,24 @@ pub fn get_sessions(output_dir: &Path) -> Result<Vec<SessionListEntry>, ViewerAp
 }
 
 fn load_session_response(path: &Path) -> Result<SessionResponse, ViewerApiError> {
-    let bytes = fs::read(path)?;
-    let value: Value = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
-    let recording_format = match value.get("recording_format").and_then(Value::as_str) {
-        Some("video-segments") => RecordingFormat::VideoSegments,
-        _ => RecordingFormat::PatchFrames,
-    };
-
-    match recording_format {
-        RecordingFormat::PatchFrames => {
-            let manifest: Manifest = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
-            Ok(SessionResponse {
-                session_id: manifest.session_id,
-                started_at: manifest.started_at,
-                finished_at: manifest.finished_at,
-                recording_format: manifest.recording_format,
-                display_width: manifest.display_width,
-                display_height: manifest.display_height,
-                working_width: manifest.working_width,
-                working_height: manifest.working_height,
-                sampling_interval_ms: manifest.sampling_interval_ms,
-                block_width: manifest.block_width,
-                block_height: manifest.block_height,
-                keyframe_interval_ms: manifest.keyframe_interval_ms,
-                sensitivity_mode: manifest.sensitivity_mode,
-                precheck_threshold: manifest.precheck_threshold,
-                block_difference_threshold: manifest.block_difference_threshold,
-                changed_pixel_ratio_threshold: manifest.changed_pixel_ratio_threshold,
-                stability_window: manifest.stability_window,
-                compression_format: manifest.compression_format,
-                recorder_version: manifest.recorder_version,
-                viewer_default_zoom: manifest.viewer_default_zoom,
-                viewer_overlay_enabled_by_default: manifest.viewer_overlay_enabled_by_default,
-                burn_in_enabled: manifest.burn_in_enabled,
-                viewer_language: manifest.viewer_language,
-            })
-        }
-        RecordingFormat::VideoSegments => {
-            let manifest: VideoSessionManifest =
-                serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
-            Ok(SessionResponse {
-                session_id: manifest.session_id,
-                started_at: manifest.started_at,
-                finished_at: manifest.finished_at,
-                recording_format: manifest.recording_format,
-                display_width: manifest.display_width,
-                display_height: manifest.display_height,
-                working_width: manifest.video_width,
-                working_height: manifest.video_height,
-                sampling_interval_ms: manifest.segment_duration_ms,
-                block_width: 0,
-                block_height: 0,
-                keyframe_interval_ms: manifest.segment_duration_ms,
-                sensitivity_mode: "video".to_string(),
-                precheck_threshold: 0.0,
-                block_difference_threshold: 0.0,
-                changed_pixel_ratio_threshold: 0.0,
-                stability_window: 0,
-                compression_format: manifest.video_codec.clone(),
-                recorder_version: manifest.recorder_version,
-                viewer_default_zoom: manifest.viewer_default_zoom,
-                viewer_overlay_enabled_by_default: manifest.viewer_overlay_enabled_by_default,
-                burn_in_enabled: manifest.burn_in_enabled,
-                viewer_language: manifest.viewer_language,
-            })
-        }
-    }
+    let manifest = VideoSessionManifest::load(path)?;
+    Ok(SessionResponse {
+        session_id: manifest.session_id,
+        started_at: manifest.started_at,
+        finished_at: manifest.finished_at,
+        recording_format: manifest.recording_format,
+        display_width: manifest.display_width,
+        display_height: manifest.display_height,
+        working_width: manifest.video_width,
+        working_height: manifest.video_height,
+        sampling_interval_ms: manifest.segment_duration_ms,
+        compression_format: manifest.video_codec.clone(),
+        recorder_version: manifest.recorder_version,
+        viewer_default_zoom: manifest.viewer_default_zoom,
+        viewer_overlay_enabled_by_default: manifest.viewer_overlay_enabled_by_default,
+        burn_in_enabled: manifest.burn_in_enabled,
+        viewer_language: manifest.viewer_language,
+    })
 }
 
 pub fn get_status(output_dir: &Path, session_id: &str) -> Result<SessionStatus, ViewerApiError> {
@@ -277,38 +170,14 @@ pub fn get_activity(
     output_dir: &Path,
     session_id: &str,
 ) -> Result<Vec<ActivityPoint>, ViewerApiError> {
-    let layout = SessionLayout::new(output_dir, session_id);
-    if layout.manifest_path().exists() {
-        let session = load_session_response(layout.manifest_path())?;
-        if matches!(session.recording_format, RecordingFormat::VideoSegments) {
-            let segments = get_video_segments(output_dir, session_id)?;
-            return Ok(segments
-                .into_iter()
-                .map(|segment| ActivityPoint {
-                    timestamp_ms: segment.started_at,
-                    patch_count: 1,
-                })
-                .collect());
-        }
-    }
-    let entries = load_patch_index(layout.index_dir())?;
-    let mut points: Vec<ActivityPoint> = Vec::new();
-
-    for entry in entries {
-        if let Some(last) = points.last_mut()
-            && last.timestamp_ms == entry.timestamp_ms
-        {
-            last.patch_count += 1;
-            continue;
-        }
-
-        points.push(ActivityPoint {
-            timestamp_ms: entry.timestamp_ms,
+    let segments = get_video_segments(output_dir, session_id)?;
+    Ok(segments
+        .into_iter()
+        .map(|segment| ActivityPoint {
+            timestamp_ms: segment.started_at,
             patch_count: 1,
-        });
-    }
-
-    Ok(points)
+        })
+        .collect())
 }
 
 pub fn get_video_segments(
@@ -317,10 +186,6 @@ pub fn get_video_segments(
 ) -> Result<Vec<VideoSegmentResponse>, ViewerApiError> {
     let layout = SessionLayout::new(output_dir, session_id);
     let manifest = VideoSessionManifest::load(layout.manifest_path())?;
-    if !matches!(manifest.recording_format, RecordingFormat::VideoSegments) {
-        return Ok(Vec::new());
-    }
-
     let mut entries = load_video_segment_index(&layout.index_dir().join("segments.jsonl"))?;
     if entries.is_empty() {
         entries = rebuild_video_segments_from_disk(&layout, &manifest)?;
@@ -356,10 +221,7 @@ fn rebuild_video_segments_from_disk(
             sequence: index as u64,
             started_at,
             finished_at,
-            relative_path: format!(
-                "segments/{}",
-                entry.file_name().to_string_lossy()
-            ),
+            relative_path: format!("segments/{}", entry.file_name().to_string_lossy()),
             bytes: metadata.len(),
         });
     }
@@ -390,6 +252,42 @@ fn viewer_safe_status_info(layout: &SessionLayout) -> Option<SessionStatusInfo> 
     })
 }
 
+fn resolved_session_finished_at(
+    session: &SessionResponse,
+    layout: &SessionLayout,
+    status: Option<&SessionStatusInfo>,
+) -> Option<u64> {
+    if let Some(finished_at) = session.finished_at
+        && finished_at > session.started_at
+    {
+        return Some(finished_at);
+    }
+
+    if status.is_some_and(|entry| entry.recording) {
+        return None;
+    }
+
+    infer_video_finished_at(layout, session.started_at)
+}
+
+fn infer_video_finished_at(layout: &SessionLayout, started_at: u64) -> Option<u64> {
+    let segments_dir = layout.segments_dir();
+    let mut latest: Option<u64> = None;
+    for entry in fs::read_dir(segments_dir).ok()? {
+        let entry = entry.ok()?;
+        let metadata = entry.metadata().ok()?;
+        if !metadata.is_file() {
+            continue;
+        }
+        let modified = metadata.modified().ok()?;
+        let timestamp_ms = modified.duration_since(UNIX_EPOCH).ok()?.as_millis() as u64;
+        if timestamp_ms > started_at {
+            latest = Some(latest.map_or(timestamp_ms, |current| current.max(timestamp_ms)));
+        }
+    }
+    latest
+}
+
 fn viewer_safe_status(layout: &SessionLayout, mut status: SessionStatus) -> SessionStatus {
     if !matches!(status.state, SessionState::Running | SessionState::Paused) {
         return status;
@@ -413,63 +311,4 @@ fn viewer_safe_status(layout: &SessionLayout, mut status: SessionStatus) -> Sess
     }
 
     status
-}
-
-pub fn get_frame_png(
-    output_dir: &Path,
-    session_id: &str,
-    timestamp_ms: u64,
-) -> Result<Vec<u8>, ViewerApiError> {
-    let reconstructor = Reconstructor::open(output_dir, session_id)?;
-    let frame = reconstructor.reconstruct_at(timestamp_ms)?;
-    encode_png(&frame)
-}
-
-pub fn get_patches(
-    output_dir: &Path,
-    session_id: &str,
-    timestamp_ms: u64,
-) -> Result<Vec<PatchMetadata>, ViewerApiError> {
-    let layout = SessionLayout::new(output_dir, session_id);
-    let manifest = Manifest::load(layout.manifest_path())?;
-    let keyframe = nearest_keyframe(layout.index_dir(), timestamp_ms)?
-        .ok_or(ViewerApiError::MissingKeyframe(timestamp_ms))?;
-    let entries =
-        patch_entries_between(layout.index_dir(), keyframe.timestamp_ms + 1, timestamp_ms)?;
-
-    let mut patches = Vec::new();
-    for entry in entries {
-        let patch = read_patch_region(&layout, &entry, &manifest.compression_format)?;
-        patches.push(PatchMetadata::from_patch(
-            entry.timestamp_ms,
-            entry.sequence,
-            &patch,
-        ));
-    }
-    Ok(patches)
-}
-
-fn encode_png(frame: &crate::frame::Frame) -> Result<Vec<u8>, ViewerApiError> {
-    let mut buffer = Vec::new();
-    let mut encoder = png::Encoder::new(&mut buffer, frame.width() as u32, frame.height() as u32);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    {
-        let mut writer = encoder.write_header()?;
-        writer.write_image_data(frame.as_rgba())?;
-    }
-    Ok(buffer)
-}
-
-impl PatchMetadata {
-    fn from_patch(timestamp_ms: u64, sequence: u64, patch: &PatchRegion) -> Self {
-        Self {
-            timestamp_ms,
-            sequence,
-            x: patch.x,
-            y: patch.y,
-            width: patch.width,
-            height: patch.height,
-        }
-    }
 }

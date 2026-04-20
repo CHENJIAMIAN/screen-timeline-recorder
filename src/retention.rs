@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::session::Manifest;
+use crate::video_session::VideoSessionManifest;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetentionReport {
@@ -69,7 +69,7 @@ pub fn enforce_retention(
             continue;
         }
 
-        let manifest = match Manifest::load(&manifest_path) {
+        let manifest = match VideoSessionManifest::load(&manifest_path) {
             Ok(manifest) => manifest,
             Err(_) => continue,
         };

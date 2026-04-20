@@ -5,10 +5,14 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
 
 use crate::{
     config::RecorderConfig,
-    recorder::RecordingStats,
+    recording_stats::RecordingStats,
     session::{RecordingFormat, SessionLayout, SessionState, SessionStatus},
     video_session::{VideoSegmentEntry, VideoSessionManifest, append_video_segment_index},
 };
@@ -16,6 +20,10 @@ use crate::{
 const DEFAULT_SEGMENT_DURATION_SECS: u64 = 30;
 const DEFAULT_CRF: u8 = 34;
 const BURN_IN_FONT_SIZE: u32 = 22;
+const DEFAULT_PRIMARY_DISPLAY_WIDTH: u32 = 1920;
+const DEFAULT_PRIMARY_DISPLAY_HEIGHT: u32 = 1080;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub fn record_video_command(config: RecorderConfig, session_id: &str) -> Result<(), String> {
     let exe_dir = std::env::current_exe()
@@ -28,8 +36,7 @@ pub fn record_video_command(config: RecorderConfig, session_id: &str) -> Result<
     layout.create_video_dirs().map_err(|err| err.to_string())?;
 
     let started_at = current_timestamp_ms();
-    let display_width = 1920;
-    let display_height = 1080;
+    let (display_width, display_height) = primary_display_size();
     let video_width = ((display_width as f32) * config.working_scale)
         .round()
         .clamp(1.0, display_width as f32) as u32;
@@ -79,7 +86,10 @@ pub fn record_video_command(config: RecorderConfig, session_id: &str) -> Result<
         DEFAULT_SEGMENT_DURATION_SECS,
         &ffmpeg_path,
     );
-    let mut child = Command::new(&ffmpeg_path)
+    let mut command = Command::new(&ffmpeg_path);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let mut child = command
         .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -169,20 +179,32 @@ pub fn build_ffmpeg_segment_args(
         "-hide_banner".to_string(),
         "-loglevel".to_string(),
         "error".to_string(),
+        "-fflags".to_string(),
+        "nobuffer".to_string(),
         "-f".to_string(),
         "gdigrab".to_string(),
-        "-draw_mouse".to_string(),
-        "1".to_string(),
         "-framerate".to_string(),
         framerate.to_string(),
+        "-video_size".to_string(),
+        format!("{display_width}x{display_height}"),
+        "-rtbufsize".to_string(),
+        "32M".to_string(),
+        "-draw_mouse".to_string(),
+        "1".to_string(),
         "-i".to_string(),
         "desktop".to_string(),
         "-vf".to_string(),
         video_filter,
         "-c:v".to_string(),
         "libx264".to_string(),
+        "-tune".to_string(),
+        "zerolatency".to_string(),
         "-preset".to_string(),
         "veryfast".to_string(),
+        "-threads".to_string(),
+        "2".to_string(),
+        "-x264-params".to_string(),
+        "rc-lookahead=0:sync-lookahead=0".to_string(),
         "-crf".to_string(),
         DEFAULT_CRF.to_string(),
         "-pix_fmt".to_string(),
@@ -199,6 +221,29 @@ pub fn build_ffmpeg_segment_args(
         "1".to_string(),
         segment_pattern.to_string_lossy().to_string(),
     ]
+}
+
+fn primary_display_size() -> (u32, u32) {
+    #[cfg(windows)]
+    {
+        let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+        let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+        let width = if width > 0 {
+            width as u32
+        } else {
+            DEFAULT_PRIMARY_DISPLAY_WIDTH
+        };
+        let height = if height > 0 {
+            height as u32
+        } else {
+            DEFAULT_PRIMARY_DISPLAY_HEIGHT
+        };
+        (width, height)
+    }
+    #[cfg(not(windows))]
+    {
+        (DEFAULT_PRIMARY_DISPLAY_WIDTH, DEFAULT_PRIMARY_DISPLAY_HEIGHT)
+    }
 }
 
 fn build_video_filter(

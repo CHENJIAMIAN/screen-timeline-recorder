@@ -72,34 +72,27 @@ fn appends_and_loads_video_segment_index_entries() {
 }
 
 #[test]
-fn old_manifests_default_to_patch_recording_format() {
+fn manifest_load_round_trips_video_segment_format() {
     let json = r#"{
-        "session_id": "legacy",
+        "session_id": "session-video",
         "started_at": 1000,
         "finished_at": 2000,
         "display_width": 1920,
         "display_height": 1080,
-        "working_width": 960,
-        "working_height": 540,
-        "sampling_interval_ms": 300,
-        "block_width": 16,
-        "block_height": 16,
-        "keyframe_interval_ms": 30000,
-        "sensitivity_mode": "balanced",
-        "precheck_threshold": 0.01,
-        "block_difference_threshold": 0.05,
-        "changed_pixel_ratio_threshold": 0.0,
-        "stability_window": 2,
-        "compression_format": "png",
+        "video_width": 960,
+        "video_height": 540,
+        "recording_format": "video-segments",
+        "segment_duration_ms": 30000,
+        "video_codec": "h264",
         "recorder_version": "0.1.0",
         "viewer_default_zoom": 1.0,
-        "viewer_overlay_enabled_by_default": true,
+        "viewer_overlay_enabled_by_default": false,
         "burn_in_enabled": true,
         "viewer_language": "auto"
     }"#;
 
-    let manifest: screen_timeline_recorder::session::Manifest =
+    let manifest: VideoSessionManifest =
         serde_json::from_str(json).expect("deserialize legacy manifest");
 
-    assert_eq!(manifest.recording_format, RecordingFormat::PatchFrames);
+    assert_eq!(manifest.recording_format, RecordingFormat::VideoSegments);
 }

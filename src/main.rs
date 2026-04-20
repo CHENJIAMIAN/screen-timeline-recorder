@@ -4,7 +4,6 @@ use screen_timeline_recorder::{
     cli::{CliOptions, Command, load_config},
     desktop::run_desktop,
     dpi::initialize_process_dpi_awareness,
-    recorder::record_command_with_stats,
     retention::enforce_retention,
     session_control::{pause_session, render_status_json, resume_session, stop_session},
     video_recorder::record_video_command,
@@ -33,7 +32,7 @@ fn main() {
     };
 
     match &options.command {
-        Command::Record { session_id } => {
+        Command::RecordVideo { session_id } => {
             let now_timestamp_ms = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -48,18 +47,6 @@ fn main() {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
-            let session_id = session_id.clone().unwrap_or_else(default_session_id);
-            match record_command_with_stats(config, &session_id) {
-                Ok((_storage, stats)) => {
-                    eprintln!("[record] session_id={session_id} {}", stats.summary_line());
-                }
-                Err(error) => {
-                    eprintln!("{error}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Command::RecordVideo { session_id } => {
             let session_id = session_id.clone().unwrap_or_else(default_session_id);
             if let Err(error) = record_video_command(config, &session_id) {
                 eprintln!("{error}");
