@@ -9,3 +9,5 @@ smoke-desktop-output/
 *-proof*.png
 frame-check*.png
 patch.diff
+.gstack/
+tmp/

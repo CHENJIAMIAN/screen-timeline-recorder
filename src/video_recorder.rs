@@ -218,7 +218,7 @@ fn build_video_filter(
             .map(|path| format!("fontfile='{}':", path.replace('\\', "/").replace(':', "\\:")))
             .unwrap_or_default();
         filters.push(format!(
-            "drawtext={fontfile}text='%{{localtime\\:%Y-%m-%d %H-%M-%S}}':x=w-tw-24:y=h-th-24:fontsize={BURN_IN_FONT_SIZE}:fontcolor=white:borderw=2:bordercolor=black@0.85:box=1:boxcolor=black@0.35:boxborderw=10"
+            "drawtext={fontfile}text='%{{localtime\\:%Y-%m-%d %H-%M-%S}}':x=24:y=24:fontsize={BURN_IN_FONT_SIZE}:fontcolor=white:borderw=2:bordercolor=black@0.85:box=1:boxcolor=black@0.35:boxborderw=10"
         ));
     }
 

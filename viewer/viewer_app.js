@@ -42,7 +42,19 @@ export function createViewerApp() {
         language: "en",
         playbackSpeed: "1",
         playbackLoop: false,
+        isRefreshing: false,
+        isSelectingSession: false,
+        loadingSessionId: null,
+        isStartingRecording: false,
+        isStoppingRecording: false,
+        isSavingAutostart: false,
+        isSavingRecordingSettings: false,
+        isDeletingDay: false,
+        isDeletingAll: false,
+        deletingSessionIds: {},
         status: "",
+        controlFeedback: "",
+        controlFeedbackVariant: "working",
         autostartFeedback: "",
         recordingFeedback: "",
       });
@@ -85,6 +97,18 @@ export function createViewerApp() {
       });
 
       const currentSegment = computed(() => state.videoSegments[state.activeSegmentIndex] || null);
+      const isBusy = computed(
+        () =>
+          state.isRefreshing ||
+          state.isSelectingSession ||
+          state.isStartingRecording ||
+          state.isStoppingRecording ||
+          state.isSavingAutostart ||
+          state.isSavingRecordingSettings ||
+          state.isDeletingDay ||
+          state.isDeletingAll ||
+          Object.keys(state.deletingSessionIds).length > 0
+      );
       const activeSegmentBadge = computed(() =>
         t("clipBadge", { current: Math.max(0, state.activeSegmentIndex + 1), total: state.videoSegments.length })
       );
@@ -130,6 +154,7 @@ export function createViewerApp() {
       function updateUrl() {
         const url = new URL(window.location.href);
         if (state.currentSessionId) url.searchParams.set("session_id", state.currentSessionId);
+        else url.searchParams.delete("session_id");
         if (state.languagePreference) url.searchParams.set("lang", state.languagePreference);
         window.history.replaceState({}, "", url);
       }
@@ -142,8 +167,18 @@ export function createViewerApp() {
 
       async function loadSessions() {
         state.sessions = await fetchJson("/api/sessions");
-        if (!state.currentSessionId && state.sessions.length > 0) {
+        if (state.sessions.length === 0) {
+          state.currentSessionId = null;
+          state.session = null;
+          state.liveStatus = null;
+          state.videoSegments = [];
+          state.activeSegmentIndex = -1;
+          updateUrl();
+          return;
+        }
+        if (!state.sessions.some((session) => session.session_id === state.currentSessionId)) {
           state.currentSessionId = state.sessions[0].session_id;
+          updateUrl();
         }
       }
 
@@ -168,7 +203,18 @@ export function createViewerApp() {
           state.status = t("noSessionsSubtitle");
           return;
         }
-        state.session = await fetchJson("/api/session", state.currentSessionId);
+        try {
+          state.session = await fetchJson("/api/session", state.currentSessionId);
+        } catch (error) {
+          await loadSessions();
+          if (!state.currentSessionId) {
+            state.session = null;
+            state.liveStatus = null;
+            state.status = t("noSessionsSubtitle");
+            return;
+          }
+          state.session = await fetchJson("/api/session", state.currentSessionId);
+        }
         state.liveStatus = await fetchJson("/api/status", state.currentSessionId).catch(() => null);
         await loadVideoSegments();
       }
@@ -182,11 +228,19 @@ export function createViewerApp() {
       }
 
       async function refreshAll() {
-        await loadSessions();
-        await loadSession();
-        await loadAutostartSettings();
-        await loadRecordingConfig();
-        state.status = t("ready");
+        state.isRefreshing = true;
+        state.status = t("refreshing");
+        try {
+          await loadSessions();
+          await loadSession();
+          await loadAutostartSettings();
+          await loadRecordingConfig();
+          state.controlFeedback = "";
+          state.controlFeedbackVariant = "working";
+          state.status = t("ready");
+        } finally {
+          state.isRefreshing = false;
+        }
       }
 
       async function loadActiveSegment(autoplay) {
@@ -207,18 +261,40 @@ export function createViewerApp() {
       }
 
       async function selectSession(sessionId) {
-        state.currentSessionId = sessionId;
-        updateUrl();
-        await loadSession();
+        state.isSelectingSession = true;
+        state.loadingSessionId = sessionId;
+        state.status = t("loadingSession");
+        try {
+          state.currentSessionId = sessionId;
+          updateUrl();
+          await loadSession();
+        } finally {
+          state.isSelectingSession = false;
+          state.loadingSessionId = null;
+        }
       }
 
       async function startRecording() {
-        const response = await fetchControl("start");
-        state.status = t("startDone");
-        if (response.session_id) {
-          state.currentSessionId = response.session_id;
-          updateUrl();
-          await waitForSession(response.session_id);
+        state.isStartingRecording = true;
+        state.controlFeedback = t("startingRecording");
+        state.controlFeedbackVariant = "working";
+        state.status = t("startingRecording");
+        try {
+          const response = await fetchControl("start");
+          state.status = t("startDone");
+          state.controlFeedback = t("startDone");
+          state.controlFeedbackVariant = "success";
+          if (response.session_id) {
+            state.currentSessionId = response.session_id;
+            updateUrl();
+            await waitForSession(response.session_id);
+          }
+        } catch (error) {
+          state.status = error?.message || t("startPendingFailed");
+          state.controlFeedback = state.status;
+          state.controlFeedbackVariant = "error";
+        } finally {
+          state.isStartingRecording = false;
         }
       }
 
@@ -231,6 +307,7 @@ export function createViewerApp() {
           }
           await new Promise((resolve) => window.setTimeout(resolve, 400));
         }
+        throw new Error(t("startPendingFailed"));
       }
 
       function activeControlSessionId() {
@@ -244,23 +321,60 @@ export function createViewerApp() {
       async function stopRecording() {
         const sessionId = activeControlSessionId();
         if (!sessionId) return;
-        await fetchControl("stop", sessionId);
-        state.status = t("stopDone");
-        await refreshAll();
+        state.isStoppingRecording = true;
+        state.controlFeedback = t("stoppingRecording");
+        state.controlFeedbackVariant = "working";
+        state.status = t("stoppingRecording");
+        try {
+          await fetchControl("stop", sessionId);
+          state.status = t("stopDone");
+          state.controlFeedback = t("stopDone");
+          state.controlFeedbackVariant = "success";
+          await refreshAll();
+          state.controlFeedback = t("stopDone");
+          state.controlFeedbackVariant = "success";
+        } catch (error) {
+          state.status = error?.message || t("stopDone");
+          state.controlFeedback = state.status;
+          state.controlFeedbackVariant = "error";
+        } finally {
+          state.isStoppingRecording = false;
+        }
       }
 
       async function deleteSession(sessionId) {
-        await fetchControl("delete", sessionId);
-        state.status = t("deleteDone");
-        await refreshAll();
+        state.deletingSessionIds = { ...state.deletingSessionIds, [sessionId]: true };
+        state.status = t("deleting");
+        try {
+          await fetchControl("delete", sessionId);
+          state.status = t("deleteDone");
+          await refreshAll();
+        } finally {
+          const next = { ...state.deletingSessionIds };
+          delete next[sessionId];
+          state.deletingSessionIds = next;
+        }
       }
 
       async function deleteSessionsByIds(ids, doneKey) {
-        for (const id of ids) {
-          await fetchControl("delete", id);
+        const nextDeleting = { ...state.deletingSessionIds };
+        ids.forEach((id) => {
+          nextDeleting[id] = true;
+        });
+        state.deletingSessionIds = nextDeleting;
+        try {
+          for (const id of ids) {
+            await fetchControl("delete", id);
+          }
+          state.status = t(doneKey);
+          await refreshAll();
+        } finally {
+          const next = { ...state.deletingSessionIds };
+          ids.forEach((id) => {
+            delete next[id];
+          });
+          state.deletingSessionIds = next;
         }
-        state.status = t(doneKey);
-        await refreshAll();
       }
 
       async function deleteDaySessions() {
@@ -269,27 +383,49 @@ export function createViewerApp() {
             state.sessionFilter === "all" ? true : dayKeyFromTimestamp(session.started_at) === state.sessionFilter
           )
           .map((session) => session.session_id);
-        await deleteSessionsByIds(ids, "deleteDayDone");
+        state.isDeletingDay = true;
+        state.status = t("deletingDay");
+        try {
+          await deleteSessionsByIds(ids, "deleteDayDone");
+        } finally {
+          state.isDeletingDay = false;
+        }
       }
 
       async function deleteAllSessions() {
-        await deleteSessionsByIds(
-          state.sessions.map((session) => session.session_id),
-          "deleteAllDone"
-        );
+        state.isDeletingAll = true;
+        state.status = t("deletingAll");
+        try {
+          await deleteSessionsByIds(
+            state.sessions.map((session) => session.session_id),
+            "deleteAllDone"
+          );
+        } finally {
+          state.isDeletingAll = false;
+        }
       }
 
       async function saveAutostartConfig() {
         const settings = state.autostart?.settings;
         if (!settings) return;
-        state.autostart = await saveAutostart(settings);
-        state.autostartFeedback = t("autostartSaved");
+        state.isSavingAutostart = true;
+        try {
+          state.autostart = await saveAutostart(settings);
+          state.autostartFeedback = t("autostartSaved");
+        } finally {
+          state.isSavingAutostart = false;
+        }
       }
 
       async function saveRecordingConfig() {
         if (!state.recordingSettings) return;
-        state.recordingSettings = await saveRecordingSettings(state.recordingSettings);
-        state.recordingFeedback = t("recordingSaved");
+        state.isSavingRecordingSettings = true;
+        try {
+          state.recordingSettings = await saveRecordingSettings(state.recordingSettings);
+          state.recordingFeedback = t("recordingSaved");
+        } finally {
+          state.isSavingRecordingSettings = false;
+        }
       }
 
       async function previousClip() {
@@ -316,6 +452,10 @@ export function createViewerApp() {
         if (raw === "paused") return t("paused");
         if (raw === "stopped") return t("stopped");
         return t("unknown");
+      }
+
+      function isSessionDeleting(sessionId) {
+        return Boolean(state.deletingSessionIds[sessionId]);
       }
 
       watch(
@@ -353,6 +493,8 @@ export function createViewerApp() {
         formatClockTimeWithDate,
         formatDayLabel,
         formatElapsed,
+        isBusy,
+        isSessionDeleting,
         loadSession,
         loadVideoSegments,
         nextClip,
@@ -425,10 +567,16 @@ export function createViewerApp() {
             <div id="recording-badge" class="recording-badge">{{ state.liveStatus?.state || t('checking') }}</div>
           </div>
           <div class="live-status-actions">
-            <button id="control-refresh" class="ghost" type="button" @click="refreshAll">{{ t('refresh') }}</button>
-            <button id="control-start" class="primary" type="button" @click="startRecording">{{ t('startRecording') }}</button>
-            <button id="control-stop" type="button" @click="stopRecording">{{ t('stopRecording') }}</button>
+            <button id="control-refresh" class="ghost" type="button" @click="refreshAll" :disabled="state.isRefreshing || state.isStartingRecording || state.isStoppingRecording">{{ state.isRefreshing ? t('refreshing') : t('refresh') }}</button>
+            <button id="control-start" class="primary" type="button" @click="startRecording" :disabled="state.isRefreshing || state.isStartingRecording || state.isStoppingRecording">{{ state.isStartingRecording ? t('startingRecording') : t('startRecording') }}</button>
+            <button id="control-stop" type="button" @click="stopRecording" :disabled="state.isRefreshing || state.isStartingRecording || state.isStoppingRecording">{{ state.isStoppingRecording ? t('stoppingRecording') : t('stopRecording') }}</button>
           </div>
+          <div
+            id="control-feedback"
+            class="feedback"
+            v-if="state.controlFeedback"
+            :data-variant="state.controlFeedbackVariant"
+          >{{ state.controlFeedback }}</div>
           <div id="status-summary" class="status-summary">{{ currentStatusSummary }}</div>
         </section>
 
@@ -461,8 +609,8 @@ export function createViewerApp() {
           <div id="autostart-note" class="note">{{ t('autostartNote') }}</div>
           <div id="autostart-feedback" class="feedback" v-if="state.autostartFeedback">{{ state.autostartFeedback }}</div>
           <div class="actions">
-            <button id="autostart-refresh" class="ghost" type="button" @click="refreshAll">{{ t('refresh') }}</button>
-            <button id="autostart-save" type="button" @click="saveAutostartConfig">{{ t('save') }}</button>
+            <button id="autostart-refresh" class="ghost" type="button" @click="refreshAll" :disabled="state.isRefreshing || state.isSavingAutostart">{{ state.isRefreshing ? t('refreshing') : t('refresh') }}</button>
+            <button id="autostart-save" type="button" @click="saveAutostartConfig" :disabled="state.isSavingAutostart">{{ state.isSavingAutostart ? t('saving') : t('save') }}</button>
           </div>
         </section>
 
@@ -488,8 +636,8 @@ export function createViewerApp() {
           <div id="recording-settings-note" class="note">{{ t('recordingNote') }}</div>
           <div id="recording-settings-feedback" class="feedback" v-if="state.recordingFeedback">{{ state.recordingFeedback }}</div>
           <div class="actions">
-            <button id="recording-refresh" class="ghost" type="button" @click="refreshAll">{{ t('refresh') }}</button>
-            <button id="recording-save" type="button" @click="saveRecordingConfig">{{ t('save') }}</button>
+            <button id="recording-refresh" class="ghost" type="button" @click="refreshAll" :disabled="state.isRefreshing || state.isSavingRecordingSettings">{{ state.isRefreshing ? t('refreshing') : t('refresh') }}</button>
+            <button id="recording-save" type="button" @click="saveRecordingConfig" :disabled="state.isSavingRecordingSettings">{{ state.isSavingRecordingSettings ? t('saving') : t('save') }}</button>
           </div>
         </section>
 
@@ -547,9 +695,9 @@ export function createViewerApp() {
                   <option v-for="day in availableDays" :key="day" :value="day">{{ formatDayLabel(day, state.language) }}</option>
                 </select>
               </label>
-              <button id="delete-day-sessions" class="ghost danger" type="button" @click="deleteDaySessions">{{ t('deleteDay') }}</button>
-              <button id="delete-all-sessions" class="ghost danger" type="button" @click="deleteAllSessions">{{ t('deleteAll') }}</button>
-              <button id="refresh-sessions" class="ghost" type="button" @click="refreshAll">{{ t('refresh') }}</button>
+              <button id="delete-day-sessions" class="ghost danger" type="button" @click="deleteDaySessions" :disabled="isBusy">{{ state.isDeletingDay ? t('deletingDay') : t('deleteDay') }}</button>
+              <button id="delete-all-sessions" class="ghost danger" type="button" @click="deleteAllSessions" :disabled="isBusy">{{ state.isDeletingAll ? t('deletingAll') : t('deleteAll') }}</button>
+              <button id="refresh-sessions" class="ghost" type="button" @click="refreshAll" :disabled="isBusy">{{ state.isRefreshing ? t('refreshing') : t('refresh') }}</button>
             </div>
           </div>
           <div id="session-list-grid" class="session-list-grid" v-if="sessionGroups.length > 0">
@@ -562,15 +710,15 @@ export function createViewerApp() {
               </div>
               <div class="session-day-grid">
                 <article class="session-card" v-for="session in group.sessions" :key="session.session_id" :class="{ current: session.session_id === state.currentSessionId }">
-                  <button class="session-card-open" type="button" @click="selectSession(session.session_id)">
+                  <button class="session-card-open" type="button" @click="selectSession(session.session_id)" :disabled="isBusy">
                     <div class="session-card-title">{{ formatClockTimeWithDate(session.started_at, state.language) }}</div>
                     <div class="session-card-subtitle">{{ sessionStateLabel(session) }}</div>
                     <div class="session-card-body">
-                      <span class="session-card-duration">{{ t('duration') }} {{ formatElapsed((session.finished_at || session.last_activity_at) - session.started_at, state.language) }}</span>
+                      <span class="session-card-duration">{{ state.loadingSessionId === session.session_id ? t('loadingSessionShort') : t('duration') + ' ' + formatElapsed((session.finished_at || session.last_activity_at) - session.started_at, state.language) }}</span>
                       <span class="session-card-size">{{ t('size') }} {{ formatBytes(session.total_bytes) }}</span>
                     </div>
                   </button>
-                  <button class="session-card-delete ghost danger" type="button" @click="deleteSession(session.session_id)">{{ t('delete') }}</button>
+                  <button class="session-card-delete ghost danger" type="button" @click="deleteSession(session.session_id)" :disabled="isBusy">{{ isSessionDeleting(session.session_id) ? t('deleting') : t('delete') }}</button>
                 </article>
               </div>
             </section>

@@ -2,6 +2,7 @@ use std::{
     fs,
     path::PathBuf,
     process::Command,
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -19,6 +20,7 @@ use crate::session::SessionStatus;
 use crate::session_control::{
     SessionControlError, delete_session, pause_session, resume_session, stop_session,
 };
+use crate::video_recorder::resolve_ffmpeg_path;
 use crate::viewer_api::{
     get_activity, get_session, get_sessions, get_status, get_video_segments,
 };
@@ -85,18 +87,19 @@ impl ViewerServer {
 
     pub fn handle_get(&self, path: &str) -> Result<ViewerResponse, String> {
         let (route, query) = split_path_and_query(path);
-        let session_id = session_id_from_query(query).unwrap_or(&self.session_id);
+        let session_id = self.resolve_session_id(query);
         match route {
             "/" => self.serve_static("index.html", ContentType::Html),
             route if route.ends_with(".js") || route.ends_with(".css") => {
                 self.serve_viewer_asset(route)
             }
             route if route.starts_with("/segments/") => {
-                self.serve_session_asset(route, session_id, ContentType::Mp4)
+                let asset_session_id = self.resolve_session_asset_session_id(route, query);
+                self.serve_session_asset(route, &asset_session_id, ContentType::Mp4)
             }
             "/api/session" => {
                 let session =
-                    get_session(&self.output_dir, session_id).map_err(|err| err.to_string())?;
+                    get_session(&self.output_dir, &session_id).map_err(|err| err.to_string())?;
                 let body = serde_json::to_vec(&session).map_err(|err| err.to_string())?;
                 Ok(ViewerResponse {
                     status_code: 200,
@@ -115,7 +118,7 @@ impl ViewerServer {
             }
             "/api/status" => {
                 let status =
-                    get_status(&self.output_dir, session_id).map_err(|err| err.to_string())?;
+                    get_status(&self.output_dir, &session_id).map_err(|err| err.to_string())?;
                 let body = serde_json::to_vec(&status).map_err(|err| err.to_string())?;
                 Ok(ViewerResponse {
                     status_code: 200,
@@ -136,10 +139,10 @@ impl ViewerServer {
             "/api/autostart/save" => self.handle_autostart_save(query),
             "/api/recording-settings" => self.handle_recording_settings(),
             "/api/recording-settings/save" => self.handle_recording_settings_save(query),
-            "/api/control" => self.handle_control(query, session_id),
+            "/api/control" => self.handle_control(query, &session_id),
             "/api/activity" => {
                 let activity =
-                    get_activity(&self.output_dir, session_id).map_err(|err| err.to_string())?;
+                    get_activity(&self.output_dir, &session_id).map_err(|err| err.to_string())?;
                 let body = serde_json::to_vec(&activity).map_err(|err| err.to_string())?;
                 Ok(ViewerResponse {
                     status_code: 200,
@@ -148,8 +151,8 @@ impl ViewerServer {
                 })
             }
             "/api/segments" => {
-                let segments =
-                    get_video_segments(&self.output_dir, session_id).map_err(|err| err.to_string())?;
+                let segments = get_video_segments(&self.output_dir, &session_id)
+                    .map_err(|err| err.to_string())?;
                 let body = serde_json::to_vec(&segments).map_err(|err| err.to_string())?;
                 Ok(ViewerResponse {
                     status_code: 200,
@@ -163,6 +166,48 @@ impl ViewerServer {
                 body: b"not found".to_vec(),
             }),
         }
+    }
+
+    fn resolve_session_id(&self, query: &str) -> String {
+        if let Some(requested) = session_id_from_query(query)
+            && self.session_exists(requested)
+        {
+            return requested.to_string();
+        }
+
+        if self.session_exists(&self.session_id) {
+            return self.session_id.clone();
+        }
+
+        get_sessions(&self.output_dir)
+            .ok()
+            .and_then(|sessions| sessions.into_iter().next())
+            .map(|session| session.session_id)
+            .unwrap_or_else(|| self.session_id.clone())
+    }
+
+    fn session_exists(&self, session_id: &str) -> bool {
+        self.output_dir
+            .join("sessions")
+            .join(session_id)
+            .join("manifest.json")
+            .is_file()
+    }
+
+    fn resolve_session_asset_session_id(&self, route: &str, query: &str) -> String {
+        let relative = route.trim_start_matches('/');
+        if let Some(requested) = session_id_from_query(query) {
+            let requested_asset = self
+                .output_dir
+                .join("sessions")
+                .join(requested)
+                .join(relative);
+            if requested_asset.is_file() {
+                return requested.to_string();
+            }
+        }
+
+        self.resolve_session_id(query)
     }
 
     pub fn serve(&self, bind_addr: &str) -> Result<(), String> {
@@ -261,7 +306,7 @@ impl ViewerServer {
                 Ok(()) => ok_control_response(
                     "stop",
                     session_id,
-                    get_status(&self.output_dir, session_id).ok(),
+                    wait_for_session_stop(&self.output_dir, session_id).ok(),
                 ),
                 Err(err) => error_control_response("stop", session_id, err),
             },
@@ -362,6 +407,13 @@ impl ViewerServer {
                 active.session_id
             ));
         }
+
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(std::path::Path::to_path_buf));
+        resolve_ffmpeg_path(exe_dir.as_deref(), &[]).ok_or_else(|| {
+            "ffmpeg sidecar not found; expected ffmpeg\\ffmpeg.exe next to the app or SCREEN_TIMELINE_FFMPEG".to_string()
+        })?;
 
         let session_id = format!(
             "session-{}",
@@ -542,6 +594,25 @@ fn content_type_header(content_type: ContentType) -> Result<Header, String> {
         .map_err(|_| "invalid header".to_string())
 }
 
+fn wait_for_session_stop(
+    output_dir: &std::path::Path,
+    session_id: &str,
+) -> Result<SessionStatus, String> {
+    const MAX_ATTEMPTS: usize = 80;
+    const POLL_MS: u64 = 100;
+
+    for _ in 0..MAX_ATTEMPTS {
+        let session = get_session(output_dir, session_id).map_err(|err| err.to_string())?;
+        let status = get_status(output_dir, session_id).map_err(|err| err.to_string())?;
+        if session.finished_at.is_some() && !status.recording {
+            return Ok(status);
+        }
+        thread::sleep(std::time::Duration::from_millis(POLL_MS));
+    }
+
+    get_status(output_dir, session_id).map_err(|err| err.to_string())
+}
+
 fn ok_control_response(
     action: &str,
     session_id: &str,
@@ -588,11 +659,17 @@ fn error_control_response(
 mod tests {
     use super::{
         recording_settings_from_query, recording_start_subcommand, resolve_viewer_dir,
+        wait_for_session_stop,
     };
 
     #[cfg(windows)]
     use super::CREATE_NO_WINDOW;
-    use crate::recording_settings::RecordingSettings;
+    use crate::{
+        recording_settings::RecordingSettings,
+        session::{SessionState, SessionStatus},
+    };
+    use serde_json::json;
+    use std::{fs, thread, time::Duration};
 
     #[test]
     fn resolve_viewer_dir_falls_back_to_manifest_viewer() {
@@ -633,5 +710,98 @@ mod tests {
     #[test]
     fn control_start_uses_no_window_creation_flag() {
         assert_eq!(CREATE_NO_WINDOW, 0x0800_0000);
+    }
+
+    #[test]
+    fn wait_for_session_stop_blocks_until_manifest_is_finalized() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let session_root = temp_dir.path().join("sessions").join("session-stop");
+        fs::create_dir_all(&session_root).expect("session dir");
+        fs::write(
+            session_root.join("manifest.json"),
+            serde_json::to_vec_pretty(&json!({
+                "session_id": "session-stop",
+                "started_at": 1000,
+                "finished_at": null,
+                "display_width": 1920,
+                "display_height": 1080,
+                "video_width": 960,
+                "video_height": 540,
+                "recording_format": "video-segments",
+                "segment_duration_ms": 30000,
+                "video_codec": "h264",
+                "recorder_version": "0.1.0",
+                "viewer_default_zoom": 1.0,
+                "viewer_overlay_enabled_by_default": false,
+                "burn_in_enabled": true,
+                "viewer_language": "auto"
+            }))
+            .expect("manifest json"),
+        )
+        .expect("write manifest");
+        fs::write(
+            session_root.join("status.json"),
+            serde_json::to_vec_pretty(&SessionStatus {
+                session_id: "session-stop".to_string(),
+                state: SessionState::Running,
+                recording: true,
+                stats: crate::recorder::RecordingStats {
+                    started_at: 1000,
+                    finished_at: 1000,
+                    ..Default::default()
+                },
+            })
+            .expect("status json"),
+        )
+        .expect("write status");
+        fs::write(session_root.join("stop.signal"), b"stop").expect("write stop signal");
+
+        let manifest_path = session_root.join("manifest.json");
+        let status_path = session_root.join("status.json");
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            fs::write(
+                &manifest_path,
+                serde_json::to_vec_pretty(&json!({
+                    "session_id": "session-stop",
+                    "started_at": 1000,
+                    "finished_at": 1300,
+                    "display_width": 1920,
+                    "display_height": 1080,
+                    "video_width": 960,
+                    "video_height": 540,
+                    "recording_format": "video-segments",
+                    "segment_duration_ms": 30000,
+                    "video_codec": "h264",
+                    "recorder_version": "0.1.0",
+                    "viewer_default_zoom": 1.0,
+                    "viewer_overlay_enabled_by_default": false,
+                    "burn_in_enabled": true,
+                    "viewer_language": "auto"
+                }))
+                .expect("manifest json"),
+            )
+            .expect("update manifest");
+            fs::write(
+                &status_path,
+                serde_json::to_vec_pretty(&SessionStatus {
+                    session_id: "session-stop".to_string(),
+                    state: SessionState::Stopped,
+                    recording: false,
+                    stats: crate::recorder::RecordingStats {
+                        started_at: 1000,
+                        finished_at: 1300,
+                        ..Default::default()
+                    },
+                })
+                .expect("status json"),
+            )
+            .expect("update status");
+        });
+
+        let status = wait_for_session_stop(temp_dir.path(), "session-stop").expect("wait");
+        assert_eq!(status.state, SessionState::Stopped);
+        assert!(!status.recording);
+        assert_eq!(status.stats.finished_at, 1300);
     }
 }

@@ -9,7 +9,24 @@ function buildUrl(path, sessionId = null) {
 async function fetchJson(path, sessionId = null) {
   const response = await fetch(buildUrl(path, sessionId));
   if (!response.ok) {
-    const error = new Error(`request failed (${response.status})`);
+    let message = `request failed (${response.status})`;
+    const contentType = response.headers.get("content-type") || "";
+    try {
+      if (contentType.includes("application/json")) {
+        const payload = await response.json();
+        if (payload?.error) {
+          message = payload.error;
+        }
+      } else {
+        const text = await response.text();
+        if (text) {
+          message = text;
+        }
+      }
+    } catch {
+      // Keep the default message when the error payload cannot be parsed.
+    }
+    const error = new Error(message);
     error.status = response.status;
     throw error;
   }

@@ -406,6 +406,26 @@ fn control_stop_creates_stop_signal() {
 }
 
 #[test]
+fn control_start_returns_error_when_ffmpeg_is_missing() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let server = ViewerServer::new(temp_dir.path(), "2026-04-13");
+
+    let response = server
+        .handle_get("/api/control?action=start")
+        .expect("start response");
+
+    assert_eq!(response.status_code, 409);
+    assert_eq!(response.content_type, ContentType::Json);
+    let body: Value = serde_json::from_slice(&response.body).expect("parse json");
+    assert_eq!(body["ok"], Value::Bool(false));
+    assert_eq!(body["action"].as_str(), Some("start"));
+    assert!(body["error"]
+        .as_str()
+        .expect("error message")
+        .contains("ffmpeg sidecar not found"));
+}
+
+#[test]
 fn session_query_parameter_overrides_default_session() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let server = ViewerServer::new(temp_dir.path(), "session-alpha");
@@ -465,4 +485,41 @@ fn session_query_parameter_overrides_default_session() {
     let body = String::from_utf8(response.body).expect("json");
     assert!(body.contains("\"session_id\":\"session-beta\""));
     assert!(body.contains("\"working_width\":640"));
+}
+
+#[test]
+fn stale_session_query_falls_back_to_default_session() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let server = ViewerServer::new(temp_dir.path(), "session-alpha");
+    let alpha_root = temp_dir.path().join("sessions").join("session-alpha");
+    std::fs::create_dir_all(&alpha_root).expect("alpha dir");
+    std::fs::write(
+        alpha_root.join("manifest.json"),
+        r#"{
+  "session_id": "session-alpha",
+  "started_at": 1000,
+  "finished_at": 2000,
+  "display_width": 1920,
+  "display_height": 1080,
+  "video_width": 960,
+  "video_height": 540,
+  "recording_format": "video-segments",
+  "segment_duration_ms": 30000,
+  "video_codec": "h264",
+  "recorder_version": "0.1.0",
+  "viewer_default_zoom": 1.0,
+  "viewer_overlay_enabled_by_default": false,
+  "burn_in_enabled": true,
+  "viewer_language": "auto"
+}"#,
+    )
+    .expect("alpha manifest");
+
+    let response = server
+        .handle_get("/api/session?session_id=session-missing")
+        .expect("session response");
+
+    assert_eq!(response.status_code, 200);
+    let body = String::from_utf8(response.body).expect("json");
+    assert!(body.contains("\"session_id\":\"session-alpha\""));
 }
