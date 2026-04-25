@@ -1,6 +1,13 @@
 import { computed, onMounted, reactive, ref, watch } from "./vendor/vue.esm-browser.prod.js";
 import { buildUrl, fetchControl, fetchJson, saveAutostart, saveRecordingSettings } from "./api_client.js";
 import {
+  advanceHighSpeedPosition,
+  applyPlaybackPreferences as applyVideoPlaybackPreferences,
+  armPlaybackPreferenceSync,
+  getSegmentEndMs as getVideoSegmentEndMs,
+  isHighSpeedPlayback,
+} from "./video_player.js";
+import {
   dayKeyFromTimestamp,
   formatBytes,
   formatClockTime,
@@ -11,19 +18,17 @@ import {
 import { resolveLanguage, translate } from "./i18n.js";
 
 function getSegmentEnd(segments, index, sessionEndMs) {
-  const segment = segments[index];
-  if (!segment) return Number(sessionEndMs || 0);
-  if (segment.finished_at !== null && segment.finished_at !== undefined) {
-    return Number(segment.finished_at || segment.started_at || 0);
-  }
-  const next = segments[index + 1];
-  if (next) return Number(next.started_at || segment.started_at || 0);
-  return Number(sessionEndMs || segment.started_at || 0);
+  return getVideoSegmentEndMs(segments, index, sessionEndMs);
 }
 
 export function createViewerApp() {
   return {
     setup() {
+      let cleanupPlaybackSync = () => {};
+      let turboPlaybackIntervalId = null;
+      let turboAnchorTimelineMs = 0;
+      let turboAnchorStartedAtMs = 0;
+      let turboTickInFlight = false;
       const videoPlayer = ref(null);
       const state = reactive({
         sessions: [],
@@ -160,9 +165,121 @@ export function createViewerApp() {
       }
 
       function applyPlaybackPreferences() {
+        applyPlaybackPreferencesToCurrentPlayer();
+      }
+
+      function applyPlaybackPreferencesToCurrentPlayer() {
         if (!videoPlayer.value) return;
-        videoPlayer.value.playbackRate = Number(state.playbackSpeed || 1);
-        videoPlayer.value.loop = false;
+        applyVideoPlaybackPreferences(videoPlayer.value, state.playbackSpeed);
+      }
+
+      function getCurrentTimelinePositionMs() {
+        const segment = currentSegment.value;
+        if (!segment || !videoPlayer.value) return 0;
+        return Number(segment.started_at || 0) + Math.max(0, Number(videoPlayer.value.currentTime || 0)) * 1000;
+      }
+
+      function resetTurboPlaybackAnchor() {
+        turboAnchorTimelineMs = getCurrentTimelinePositionMs();
+        turboAnchorStartedAtMs = performance.now();
+      }
+
+      function stopTurboPlayback() {
+        if (turboPlaybackIntervalId !== null) {
+          window.clearInterval(turboPlaybackIntervalId);
+          turboPlaybackIntervalId = null;
+        }
+        turboTickInFlight = false;
+      }
+
+      async function ensurePlayerReady(player) {
+        if (!player || player.readyState >= 1) return;
+        await new Promise((resolve) => {
+          let resolved = false;
+          const finish = () => {
+            if (resolved) return;
+            resolved = true;
+            player.removeEventListener("loadedmetadata", finish);
+            player.removeEventListener("canplay", finish);
+            player.removeEventListener("error", finish);
+            resolve();
+          };
+          player.addEventListener("loadedmetadata", finish, { once: true });
+          player.addEventListener("canplay", finish, { once: true });
+          player.addEventListener("error", finish, { once: true });
+        });
+      }
+
+      async function seekToPlaybackPosition(segmentIndex, offsetSeconds, autoplay) {
+        if (!videoPlayer.value) return;
+        if (segmentIndex < 0 || !state.videoSegments[segmentIndex]) return;
+
+        if (state.activeSegmentIndex !== segmentIndex) {
+          state.activeSegmentIndex = segmentIndex;
+          await loadActiveSegment(autoplay, offsetSeconds);
+          return;
+        }
+
+        if (Math.abs((videoPlayer.value.currentTime || 0) - offsetSeconds) > 0.2) {
+          videoPlayer.value.currentTime = offsetSeconds;
+        }
+        if (autoplay && videoPlayer.value.paused) {
+          await videoPlayer.value.play().catch(() => {});
+        }
+      }
+
+      async function tickTurboPlayback() {
+        if (turboTickInFlight || !videoPlayer.value || videoPlayer.value.paused) {
+          if (!videoPlayer.value || videoPlayer.value?.paused) {
+            stopTurboPlayback();
+          }
+          return;
+        }
+
+        turboTickInFlight = true;
+        try {
+          const target = advanceHighSpeedPosition({
+            segments: state.videoSegments,
+            currentTimelineMs: turboAnchorTimelineMs,
+            playbackSpeed: state.playbackSpeed,
+            elapsedMs: performance.now() - turboAnchorStartedAtMs,
+            sessionEndMs: sessionEndMs.value,
+            loop: state.playbackLoop,
+          });
+
+          if (target.segmentIndex < 0) {
+            stopTurboPlayback();
+            return;
+          }
+
+          await seekToPlaybackPosition(target.segmentIndex, target.offsetSeconds, !target.ended);
+
+          if (target.ended && videoPlayer.value) {
+            stopTurboPlayback();
+            videoPlayer.value.pause();
+          }
+        } finally {
+          turboTickInFlight = false;
+        }
+      }
+
+      function syncTurboPlayback() {
+        if (!videoPlayer.value || !currentSegment.value) {
+          stopTurboPlayback();
+          return;
+        }
+
+        if (videoPlayer.value.paused || !isHighSpeedPlayback(state.playbackSpeed)) {
+          stopTurboPlayback();
+          return;
+        }
+
+        resetTurboPlaybackAnchor();
+        if (turboPlaybackIntervalId !== null) return;
+
+        turboPlaybackIntervalId = window.setInterval(() => {
+          void tickTurboPlayback();
+        }, 100);
       }
 
       async function loadSessions() {
@@ -183,6 +300,7 @@ export function createViewerApp() {
       }
 
       async function loadVideoSegments() {
+        stopTurboPlayback();
         if (!state.currentSessionId) {
           state.videoSegments = [];
           state.activeSegmentIndex = -1;
@@ -228,6 +346,7 @@ export function createViewerApp() {
       }
 
       async function refreshAll() {
+        stopTurboPlayback();
         state.isRefreshing = true;
         state.status = t("refreshing");
         try {
@@ -243,24 +362,33 @@ export function createViewerApp() {
         }
       }
 
-      async function loadActiveSegment(autoplay) {
+      async function loadActiveSegment(autoplay, startOffsetSeconds = 0) {
         const segment = currentSegment.value;
         if (!segment || !videoPlayer.value) {
+          stopTurboPlayback();
+          cleanupPlaybackSync();
           if (videoPlayer.value) {
             videoPlayer.value.removeAttribute("src");
             videoPlayer.value.load();
           }
           return;
         }
+        cleanupPlaybackSync();
+        cleanupPlaybackSync = armPlaybackPreferenceSync(videoPlayer.value, () => state.playbackSpeed);
         videoPlayer.value.src = buildUrl(`/${segment.relative_path}`, state.currentSessionId);
         videoPlayer.value.load();
-        applyPlaybackPreferences();
+        applyPlaybackPreferencesToCurrentPlayer();
+        await ensurePlayerReady(videoPlayer.value);
+        if (startOffsetSeconds > 0) {
+          videoPlayer.value.currentTime = startOffsetSeconds;
+        }
         if (autoplay) {
           await videoPlayer.value.play().catch(() => {});
         }
       }
 
       async function selectSession(sessionId) {
+        stopTurboPlayback();
         state.isSelectingSession = true;
         state.loadingSessionId = sessionId;
         state.status = t("loadingSession");
@@ -429,12 +557,14 @@ export function createViewerApp() {
       }
 
       async function previousClip() {
+        stopTurboPlayback();
         if (state.activeSegmentIndex <= 0) return;
         state.activeSegmentIndex -= 1;
         await loadActiveSegment(false);
       }
 
       async function nextClip(autoplay = false) {
+        stopTurboPlayback();
         if (state.activeSegmentIndex >= state.videoSegments.length - 1) {
           if (state.playbackLoop && state.videoSegments.length > 0) {
             state.activeSegmentIndex = 0;
@@ -458,6 +588,11 @@ export function createViewerApp() {
         return Boolean(state.deletingSessionIds[sessionId]);
       }
 
+      async function handlePlaybackEnded() {
+        stopTurboPlayback();
+        await nextClip(true);
+      }
+
       watch(
         () => state.languagePreference,
         () => {
@@ -469,7 +604,10 @@ export function createViewerApp() {
 
       watch(
         () => state.playbackSpeed,
-        () => applyPlaybackPreferences()
+        () => {
+          applyPlaybackPreferences();
+          syncTurboPlayback();
+        }
       );
 
       onMounted(async () => {
@@ -497,6 +635,7 @@ export function createViewerApp() {
         isSessionDeleting,
         loadSession,
         loadVideoSegments,
+        handlePlaybackEnded,
         nextClip,
         previousClip,
         refreshAll,
@@ -509,7 +648,9 @@ export function createViewerApp() {
         sessionStateLabel,
         startRecording,
         state,
+        stopTurboPlayback,
         stopRecording,
+        syncTurboPlayback,
         t,
         videoPlayer,
       };
@@ -649,7 +790,7 @@ export function createViewerApp() {
             </div>
             <div id="viewer-segment-badge" class="badge">{{ activeSegmentBadge }}</div>
           </div>
-          <video id="video-player" ref="videoPlayer" controls playsinline muted @ended="nextClip(true)"></video>
+          <video id="video-player" ref="videoPlayer" controls playsinline muted @play="syncTurboPlayback" @pause="stopTurboPlayback" @ended="handlePlaybackEnded"></video>
           <div id="viewer-player-panel" class="viewer-player-panel">
             <div class="viewer-player-meta">
               <div id="viewer-segment-title" class="viewer-player-title">{{ segmentTitle }}</div>
