@@ -6,6 +6,7 @@ pub mod dpi;
 pub mod logging;
 pub mod recording_settings;
 pub mod recording_stats;
+pub mod recording_guard;
 pub mod retention;
 pub mod session;
 pub mod session_control;

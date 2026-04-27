@@ -2,6 +2,7 @@
 target/
 dist/
 output/
+tools/ffmpeg/
 smoke-desktop-output/
 *.log
 *.stderr.log

@@ -1,6 +1,7 @@
 use crate::{
     autostart::{apply_autostart_settings, get_autostart_status, load_autostart_settings},
     config::{RecorderConfig, ViewerLanguage},
+    recording_guard::{ActiveRecordingSnapshot, RecordingGuardAction, RecordingGuardState},
     session_control::{pause_session, read_status, resume_session, stop_session},
     viewer_api::get_sessions,
     viewer_server::ViewerServer,
@@ -28,7 +29,37 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Builder as GlobalShortcutBuilder, GlobalShortcutExt};
 
 #[cfg(target_os = "windows")]
-use windows::Win32::Globalization::GetUserDefaultUILanguage;
+use windows::{
+    Win32::{
+        Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM},
+        Globalization::GetUserDefaultUILanguage,
+        System::{
+            LibraryLoader::GetModuleHandleW,
+            Power::{
+                HPOWERNOTIFY, POWERBROADCAST_SETTING, RegisterPowerSettingNotification,
+                UnregisterPowerSettingNotification,
+            },
+            RemoteDesktop::{
+                NOTIFY_FOR_THIS_SESSION, WTSRegisterSessionNotification,
+                WTSUnRegisterSessionNotification,
+            },
+            StationsAndDesktops::{
+                CloseDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, GetUserObjectInformationW,
+                OpenInputDesktop, UOI_NAME,
+            },
+            SystemServices::GUID_CONSOLE_DISPLAY_STATE,
+        },
+        UI::WindowsAndMessaging::{
+            CREATESTRUCTW, CreateWindowExW, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW,
+            DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, HWND_MESSAGE, MSG,
+            PBT_POWERSETTINGCHANGE, RegisterClassW, SetTimer, SetWindowLongPtrW, TranslateMessage,
+            WINDOW_EX_STYLE, WM_CREATE, WM_DESTROY, WM_NCCREATE, WM_NCDESTROY,
+            WM_POWERBROADCAST, WM_TIMER, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_OVERLAPPED,
+            WTS_SESSION_LOCK, WTS_SESSION_UNLOCK,
+        },
+    },
+    core::PCWSTR,
+};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -56,6 +87,14 @@ const SHORTCUT_START_RECORDING: &str = "Ctrl+Alt+Shift+R";
 const SHORTCUT_PAUSE_RESUME: &str = "Ctrl+Alt+Shift+P";
 #[cfg(target_os = "windows")]
 const SHORTCUT_STOP_RECORDING: &str = "Ctrl+Alt+Shift+S";
+#[cfg(target_os = "windows")]
+const AUTO_PAUSE_CLASS_NAME: &str = "ScreenTimelineRecorderAutoPauseMonitor";
+#[cfg(target_os = "windows")]
+const AUTO_PAUSE_TIMER_ID: usize = 1;
+#[cfg(target_os = "windows")]
+const AUTO_PAUSE_TIMER_INTERVAL_MS: u32 = 2_000;
+#[cfg(target_os = "windows")]
+const CONSOLE_DISPLAY_STATE_ON: u32 = 1;
 
 #[cfg(target_os = "windows")]
 #[derive(Clone)]
@@ -69,6 +108,15 @@ struct DesktopState {
 enum DesktopLanguage {
     En,
     Zh,
+}
+
+#[cfg(target_os = "windows")]
+struct AutoPauseMonitorContext {
+    output_dir: PathBuf,
+    guard_state: RecordingGuardState,
+    display_on: bool,
+    session_unlocked: bool,
+    power_notify: Option<HPOWERNOTIFY>,
 }
 
 #[cfg(target_os = "windows")]
@@ -93,6 +141,7 @@ pub fn run_desktop(
         output_dir: config.output_dir.clone(),
         language,
     };
+    spawn_auto_pause_monitor(config.output_dir.clone());
 
     tauri::Builder::default()
         .plugin(GlobalShortcutBuilder::new().build())
@@ -127,6 +176,293 @@ pub fn run_desktop(
         })
         .run(tauri::generate_context!())
         .map_err(|err| err.to_string())
+}
+
+#[cfg(target_os = "windows")]
+impl AutoPauseMonitorContext {
+    fn new(output_dir: PathBuf) -> Self {
+        Self {
+            output_dir,
+            guard_state: RecordingGuardState::default(),
+            display_on: true,
+            session_unlocked: true,
+            power_notify: None,
+        }
+    }
+
+    fn desktop_available(&self) -> bool {
+        self.display_on && self.session_unlocked
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_auto_pause_monitor(output_dir: PathBuf) {
+    thread::spawn(move || {
+        if let Err(error) = run_auto_pause_monitor(output_dir) {
+            eprintln!("auto pause monitor failed: {error}");
+        }
+    });
+}
+
+#[cfg(target_os = "windows")]
+fn run_auto_pause_monitor(output_dir: PathBuf) -> Result<(), String> {
+    let class_name = to_wide(AUTO_PAUSE_CLASS_NAME);
+    let hinstance = unsafe { GetModuleHandleW(None) }.map_err(|err| err.to_string())?;
+    let window_class = WNDCLASSW {
+        lpfnWndProc: Some(auto_pause_window_proc),
+        hInstance: hinstance.into(),
+        lpszClassName: PCWSTR(class_name.as_ptr()),
+        ..Default::default()
+    };
+
+    let atom = unsafe { RegisterClassW(&window_class) };
+    if atom == 0 {
+        return Err("failed to register auto pause monitor window class".to_string());
+    }
+
+    let context = Box::new(AutoPauseMonitorContext::new(output_dir));
+    let context_ptr = Box::into_raw(context);
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            PCWSTR(class_name.as_ptr()),
+            PCWSTR(class_name.as_ptr()),
+            WS_OVERLAPPED,
+            0,
+            0,
+            0,
+            0,
+            HWND_MESSAGE,
+            None,
+            hinstance,
+            Some(context_ptr.cast()),
+        )
+    };
+    if hwnd.0 == 0 {
+        unsafe {
+            drop(Box::from_raw(context_ptr));
+        }
+        return Err("failed to create auto pause monitor window".to_string());
+    }
+
+    let mut message = MSG::default();
+    while unsafe { GetMessageW(&mut message, None, 0, 0) }.into() {
+        unsafe {
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn auto_pause_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_NCCREATE => {
+            let create_struct = lparam.0 as *const CREATESTRUCTW;
+            if create_struct.is_null() {
+                return LRESULT(0);
+            }
+            let context_ptr =
+                unsafe { (*create_struct).lpCreateParams as *mut AutoPauseMonitorContext };
+            let _ = unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, context_ptr as isize) };
+            LRESULT(1)
+        }
+        WM_CREATE => {
+            if let Some(context) = unsafe { auto_pause_context_mut(hwnd) } {
+                let power_notify = unsafe { RegisterPowerSettingNotification(
+                    hwnd,
+                    &GUID_CONSOLE_DISPLAY_STATE,
+                    DEVICE_NOTIFY_WINDOW_HANDLE,
+                ) };
+                if let Ok(power_notify) = power_notify {
+                    context.power_notify = Some(power_notify);
+                }
+                let _ = unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) };
+                let _ = unsafe { SetTimer(hwnd, AUTO_PAUSE_TIMER_ID, AUTO_PAUSE_TIMER_INTERVAL_MS, None) };
+                context.session_unlocked = probe_interactive_desktop_available();
+                reconcile_auto_pause_monitor(context);
+            }
+            LRESULT(0)
+        }
+        WM_POWERBROADCAST => {
+            if wparam.0 as u32 == PBT_POWERSETTINGCHANGE
+                && let Some(context) = unsafe { auto_pause_context_mut(hwnd) }
+                && let Some(display_on) = decode_console_display_state(lparam)
+            {
+                context.display_on = display_on;
+                reconcile_auto_pause_monitor(context);
+            }
+            LRESULT(1)
+        }
+        WM_WTSSESSION_CHANGE => {
+            if let Some(context) = unsafe { auto_pause_context_mut(hwnd) } {
+                match wparam.0 as u32 {
+                    WTS_SESSION_LOCK => context.session_unlocked = false,
+                    WTS_SESSION_UNLOCK => context.session_unlocked = true,
+                    _ => {}
+                }
+                reconcile_auto_pause_monitor(context);
+            }
+            LRESULT(0)
+        }
+        WM_TIMER => {
+            if wparam.0 == AUTO_PAUSE_TIMER_ID
+                && let Some(context) = unsafe { auto_pause_context_mut(hwnd) }
+            {
+                context.session_unlocked = probe_interactive_desktop_available();
+                reconcile_auto_pause_monitor(context);
+            }
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            if let Some(context) = unsafe { auto_pause_context_mut(hwnd) } {
+                if let Some(power_notify) = context.power_notify.take() {
+                    let _ = unsafe { UnregisterPowerSettingNotification(power_notify) };
+                }
+                let _ = unsafe { WTSUnRegisterSessionNotification(hwnd) };
+            }
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
+        WM_NCDESTROY => {
+            let context_ptr =
+                unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AutoPauseMonitorContext };
+            if !context_ptr.is_null() {
+                let _ = unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) };
+                unsafe {
+                    drop(Box::from_raw(context_ptr));
+                }
+            }
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
+        _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn auto_pause_context_mut(hwnd: HWND) -> Option<&'static mut AutoPauseMonitorContext> {
+    let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *mut AutoPauseMonitorContext;
+    unsafe { ptr.as_mut() }
+}
+
+#[cfg(target_os = "windows")]
+fn reconcile_auto_pause_monitor(context: &mut AutoPauseMonitorContext) {
+    let desktop_available = context.desktop_available();
+    let active_recording = active_recording_snapshot(&context.output_dir);
+    let action = context
+        .guard_state
+        .reconcile(desktop_available, active_recording);
+
+    match action {
+        Some(RecordingGuardAction::Pause(session_id)) => {
+            let _ = pause_session(&context.output_dir, &session_id);
+        }
+        Some(RecordingGuardAction::Resume(session_id)) => {
+            let _ = resume_session(&context.output_dir, &session_id);
+        }
+        None => {}
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn active_recording_snapshot(output_dir: &Path) -> Option<ActiveRecordingSnapshot> {
+    let session_id = active_recording_session_id(output_dir)?;
+    let status = read_status(output_dir, &session_id).ok()?;
+    Some(ActiveRecordingSnapshot {
+        session_id,
+        paused: matches!(status.state, crate::session::SessionState::Paused),
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn decode_console_display_state(lparam: LPARAM) -> Option<bool> {
+    if lparam.0 == 0 {
+        return None;
+    }
+
+    let setting = unsafe { &*(lparam.0 as *const POWERBROADCAST_SETTING) };
+    if setting.PowerSetting != GUID_CONSOLE_DISPLAY_STATE || setting.DataLength < 4 {
+        return None;
+    }
+
+    let bytes = unsafe {
+        std::slice::from_raw_parts(setting.Data.as_ptr(), setting.DataLength as usize)
+    };
+    let state = u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    Some(state == CONSOLE_DISPLAY_STATE_ON)
+}
+
+#[cfg(target_os = "windows")]
+fn to_wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn probe_interactive_desktop_available() -> bool {
+    let desktop = unsafe {
+        OpenInputDesktop(
+            DESKTOP_CONTROL_FLAGS::default(),
+            false,
+            DESKTOP_READOBJECTS,
+        )
+    };
+    let Ok(desktop) = desktop else {
+        return false;
+    };
+
+    let result = desktop_name_is_default(desktop.0);
+    let _ = unsafe { CloseDesktop(desktop) };
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn desktop_name_is_default(raw_desktop_handle: isize) -> bool {
+    let mut needed = 0u32;
+    let _ = unsafe {
+        GetUserObjectInformationW(
+            HANDLE(raw_desktop_handle),
+            UOI_NAME,
+            None,
+            0,
+            Some(&mut needed),
+        )
+    };
+    if needed < 2 {
+        return false;
+    }
+
+    let mut buffer = vec![0u16; (needed as usize / 2).max(1)];
+    if unsafe {
+        GetUserObjectInformationW(
+            HANDLE(raw_desktop_handle),
+            UOI_NAME,
+            Some(buffer.as_mut_ptr().cast()),
+            needed,
+            Some(&mut needed),
+        )
+    }
+    .is_err()
+    {
+        return false;
+    }
+
+    let name = String::from_utf16_lossy(&buffer);
+    let trimmed = name.trim_end_matches('\0');
+    trimmed.eq_ignore_ascii_case("default")
+}
+
+#[cfg(test)]
+mod desktop_tests {
+    #[test]
+    fn desktop_name_match_is_case_insensitive_for_default() {
+        assert!("Default".eq_ignore_ascii_case("default"));
+    }
 }
 
 #[cfg(target_os = "windows")]

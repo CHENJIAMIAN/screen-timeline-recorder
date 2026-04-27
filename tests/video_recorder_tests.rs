@@ -3,7 +3,10 @@ use std::path::Path;
 use screen_timeline_recorder::{
     config::RecorderConfig,
     session::SessionLayout,
-    video_recorder::{build_ffmpeg_segment_args, build_video_segment_index, resolve_ffmpeg_path},
+    video_recorder::{
+        build_ffmpeg_segment_args, build_segment_entries_for_run, build_video_segment_index,
+        classify_ffmpeg_exit, is_ignorable_ffmpeg_stop_error, resolve_ffmpeg_path,
+    },
 };
 
 #[test]
@@ -31,6 +34,21 @@ fn resolve_ffmpeg_path_accepts_explicit_candidates() {
 }
 
 #[test]
+fn resolve_ffmpeg_path_falls_back_to_repo_tools_ffmpeg_for_dev_builds() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let exe_dir = temp_dir.path().join("target").join("debug");
+    let repo_root = temp_dir.path();
+    std::fs::create_dir_all(repo_root.join("tools").join("ffmpeg")).expect("ffmpeg dir");
+    std::fs::create_dir_all(&exe_dir).expect("exe dir");
+    let bundled = repo_root.join("tools").join("ffmpeg").join("ffmpeg.exe");
+    std::fs::write(&bundled, b"binary").expect("write fake ffmpeg");
+
+    let resolved = resolve_ffmpeg_path(Some(&exe_dir), &[]).expect("resolve ffmpeg");
+
+    assert_eq!(resolved, bundled);
+}
+
+#[test]
 fn build_ffmpeg_segment_args_targets_segmented_mp4_output() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let config = RecorderConfig::default().with_output_dir(temp_dir.path().to_path_buf());
@@ -44,6 +62,7 @@ fn build_ffmpeg_segment_args_targets_segmented_mp4_output() {
         1440,
         810,
         30,
+        0,
         Path::new("ffmpeg.exe"),
     );
 
@@ -58,7 +77,7 @@ fn build_ffmpeg_segment_args_targets_segmented_mp4_output() {
     assert!(joined.contains("-x264-params rc-lookahead=0:sync-lookahead=0"));
     assert!(joined.contains("-f segment"));
     assert!(joined.contains("-segment_time 30"));
-    assert!(joined.contains("segments\\%06d.mp4") || joined.contains("segments/%06d.mp4"));
+    assert!(joined.contains("segments\\run-000000-%06d.mp4") || joined.contains("segments/run-000000-%06d.mp4"));
 }
 
 #[test]
@@ -75,6 +94,7 @@ fn build_ffmpeg_segment_args_adds_burn_in_filter_when_enabled() {
         1920,
         1080,
         30,
+        0,
         Path::new("ffmpeg.exe"),
     );
 
@@ -99,6 +119,7 @@ fn build_ffmpeg_segment_args_omits_burn_in_filter_when_disabled() {
         1920,
         1080,
         30,
+        0,
         Path::new("ffmpeg.exe"),
     );
 
@@ -138,4 +159,46 @@ fn video_layout_creation_only_builds_video_directories() {
     assert!(layout.root().exists());
     assert!(layout.segments_dir().exists());
     assert!(layout.index_dir().exists());
+}
+
+#[test]
+fn build_segment_entries_for_run_keeps_timeline_continuous_across_pause_resume() {
+    let entries = build_segment_entries_for_run(
+        1_000,
+        31_000,
+        30_000,
+        0,
+        &[
+            ("000000.mp4".to_string(), 11),
+            ("000001.mp4".to_string(), 13),
+        ],
+    );
+
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].sequence, 0);
+    assert_eq!(entries[0].started_at, 1_000);
+    assert_eq!(entries[0].finished_at, Some(31_000));
+    assert_eq!(entries[1].sequence, 1);
+    assert_eq!(entries[1].started_at, 31_000);
+    assert_eq!(entries[1].finished_at, Some(32_000));
+}
+
+#[test]
+fn classify_ffmpeg_exit_treats_non_zero_exit_during_pause_as_pause() {
+    assert_eq!(classify_ffmpeg_exit(false, true), Ok(true));
+    assert_eq!(classify_ffmpeg_exit(true, false), Ok(false));
+    assert!(classify_ffmpeg_exit(false, false).is_err());
+}
+
+#[test]
+fn is_ignorable_ffmpeg_stop_error_accepts_broken_pipe_and_invalid_input() {
+    assert!(is_ignorable_ffmpeg_stop_error(&std::io::Error::from(
+        std::io::ErrorKind::BrokenPipe
+    )));
+    assert!(is_ignorable_ffmpeg_stop_error(&std::io::Error::from(
+        std::io::ErrorKind::InvalidInput
+    )));
+    assert!(!is_ignorable_ffmpeg_stop_error(&std::io::Error::from(
+        std::io::ErrorKind::PermissionDenied
+    )));
 }
