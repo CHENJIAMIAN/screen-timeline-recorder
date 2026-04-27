@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Fetch ffmpeg
+        shell: pwsh
+        run: .\scripts\fetch-ffmpeg.ps1 -AlsoCopyToTargetRelease
+
+      - name: Package desktop build
+        shell: pwsh
+        run: .\scripts\package-desktop.ps1
+
+      - name: Prepare versioned asset
+        id: asset
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path .\Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"$').Matches[0].Groups[1].Value
+          $assetName = "screen-timeline-recorder-v$version-windows-x64.zip"
+          Copy-Item -Force .\dist\screen-timeline-recorder-desktop.zip (Join-Path .\dist $assetName)
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "asset_name=$assetName" >> $env:GITHUB_OUTPUT
+          "asset_path=dist/$assetName" >> $env:GITHUB_OUTPUT
+
+      - name: Upload packaged zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.asset.outputs.asset_name }}
+          path: ${{ steps.asset.outputs.asset_path }}
+
+      - name: Publish GitHub release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.asset.outputs.asset_path }}
