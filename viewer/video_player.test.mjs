@@ -7,6 +7,9 @@ import {
   armPlaybackPreferenceSync,
   isHighSpeedPlayback,
   nativePlaybackRateForSpeed,
+  playbackSpeedOptions,
+  segmentIndexFromSliderValue,
+  sliderValueFromSegmentIndex,
 } from "./video_player.js";
 
 class FakeVideoPlayer {
@@ -167,4 +170,24 @@ test("advanceHighSpeedPosition clamps to the final segment when high speed reach
       timelineMs: 61_000,
     }
   );
+});
+
+test("sliderValueFromSegmentIndex converts the active segment index to a 1-based slider position", () => {
+  assert.equal(sliderValueFromSegmentIndex(0), 1);
+  assert.equal(sliderValueFromSegmentIndex(2), 3);
+  assert.equal(sliderValueFromSegmentIndex(-1), 1);
+});
+
+test("segmentIndexFromSliderValue rounds and clamps into the available segment range", () => {
+  assert.equal(segmentIndexFromSliderValue(1, 4), 0);
+  assert.equal(segmentIndexFromSliderValue(2.6, 4), 2);
+  assert.equal(segmentIndexFromSliderValue(99, 4), 3);
+  assert.equal(segmentIndexFromSliderValue(-3, 4), 0);
+  assert.equal(segmentIndexFromSliderValue(1, 0), -1);
+});
+
+test("playbackSpeedOptions includes the new 3600x option", () => {
+  assert.equal(playbackSpeedOptions.at(-1), "3600");
+  assert.ok(playbackSpeedOptions.includes("360"));
+  assert.ok(playbackSpeedOptions.includes("3600"));
 });

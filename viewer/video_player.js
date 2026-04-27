@@ -1,6 +1,26 @@
 const playbackSyncKey = Symbol("screenTimelinePlaybackSync");
 const MAX_NATIVE_PLAYBACK_RATE = 16;
 
+export const playbackSpeedOptions = [
+  "0.25",
+  "0.5",
+  "0.75",
+  "1",
+  "1.25",
+  "1.5",
+  "2",
+  "3",
+  "4",
+  "8",
+  "16",
+  "32",
+  "60",
+  "120",
+  "240",
+  "360",
+  "3600",
+];
+
 function playbackSpeedNumber(playbackSpeed) {
   const numericSpeed = Number(playbackSpeed || 1);
   return Number.isFinite(numericSpeed) && numericSpeed > 0 ? numericSpeed : 1;
@@ -23,6 +43,16 @@ export function getSegmentEndMs(segments, index, sessionEndMs) {
   const next = segments[index + 1];
   if (next) return Number(next.started_at || segment.started_at || 0);
   return Number(sessionEndMs || segment.started_at || 0);
+}
+
+export function sliderValueFromSegmentIndex(segmentIndex) {
+  return Math.max(1, Number(segmentIndex || 0) + 1);
+}
+
+export function segmentIndexFromSliderValue(sliderValue, segmentCount) {
+  if (segmentCount <= 0) return -1;
+  const normalized = Math.round(Number(sliderValue || 1));
+  return Math.max(0, Math.min(segmentCount - 1, normalized - 1));
 }
 
 function normalizeTimelineMs(segments, timelineMs, sessionEndMs, loop) {

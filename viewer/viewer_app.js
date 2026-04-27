@@ -6,6 +6,9 @@ import {
   armPlaybackPreferenceSync,
   getSegmentEndMs as getVideoSegmentEndMs,
   isHighSpeedPlayback,
+  playbackSpeedOptions,
+  segmentIndexFromSliderValue,
+  sliderValueFromSegmentIndex,
 } from "./video_player.js";
 import {
   dayKeyFromTimestamp,
@@ -102,6 +105,14 @@ export function createViewerApp() {
       });
 
       const currentSegment = computed(() => state.videoSegments[state.activeSegmentIndex] || null);
+      const activeSegmentSliderValue = computed(() => sliderValueFromSegmentIndex(state.activeSegmentIndex));
+      const activeSegmentSliderPercent = computed(() => {
+        if (state.videoSegments.length <= 1) return 100;
+        return ((activeSegmentSliderValue.value - 1) / (state.videoSegments.length - 1)) * 100;
+      });
+      const segmentSliderStyle = computed(() => ({
+        background: `linear-gradient(90deg, rgba(73, 197, 140, 0.92) 0%, rgba(73, 197, 140, 0.92) ${activeSegmentSliderPercent.value}%, rgba(255, 255, 255, 0.12) ${activeSegmentSliderPercent.value}%, rgba(255, 255, 255, 0.12) 100%)`,
+      }));
       const isBusy = computed(
         () =>
           state.isRefreshing ||
@@ -576,6 +587,16 @@ export function createViewerApp() {
         await loadActiveSegment(autoplay);
       }
 
+      async function selectClipFromSlider(event) {
+        const targetIndex = segmentIndexFromSliderValue(event?.target?.value, state.videoSegments.length);
+        if (targetIndex < 0 || targetIndex === state.activeSegmentIndex) return;
+
+        stopTurboPlayback();
+        state.activeSegmentIndex = targetIndex;
+        const autoplay = Boolean(videoPlayer.value && !videoPlayer.value.paused);
+        await loadActiveSegment(autoplay);
+      }
+
       function sessionStateLabel(session) {
         const raw = session.status?.state || (session.finished_at ? "stopped" : "unknown");
         if (raw === "running") return t("running");
@@ -618,6 +639,8 @@ export function createViewerApp() {
 
       return {
         activeSegmentBadge,
+        activeSegmentSliderPercent,
+        activeSegmentSliderValue,
         applyPlaybackPreferences,
         availableDays,
         currentSegment,
@@ -637,10 +660,13 @@ export function createViewerApp() {
         loadVideoSegments,
         handlePlaybackEnded,
         nextClip,
+        playbackSpeedOptions,
         previousClip,
         refreshAll,
         saveAutostartConfig,
         saveRecordingConfig,
+        selectClipFromSlider,
+        segmentSliderStyle,
         segmentRange,
         segmentTitle,
         selectSession,
@@ -791,6 +817,28 @@ export function createViewerApp() {
             <div id="viewer-segment-badge" class="badge">{{ activeSegmentBadge }}</div>
           </div>
           <video id="video-player" ref="videoPlayer" controls playsinline muted @play="syncTurboPlayback" @pause="stopTurboPlayback" @ended="handlePlaybackEnded"></video>
+          <div class="viewer-segment-slider" v-if="state.videoSegments.length > 0">
+            <label class="field viewer-segment-slider-field" for="segment-slider">
+              <span class="viewer-segment-slider-topline">
+                <span id="segment-slider-label">{{ t('clipSelector') }}</span>
+                <span class="viewer-segment-slider-value">{{ activeSegmentBadge }}</span>
+              </span>
+              <input
+                id="segment-slider"
+                class="segment-slider-input"
+                type="range"
+                min="1"
+                :max="state.videoSegments.length"
+                :value="activeSegmentSliderValue"
+                :style="segmentSliderStyle"
+                @input="selectClipFromSlider"
+              />
+              <span class="viewer-segment-slider-scale" aria-hidden="true">
+                <span>1</span>
+                <span>{{ state.videoSegments.length }}</span>
+              </span>
+            </label>
+          </div>
           <div id="viewer-player-panel" class="viewer-player-panel">
             <div class="viewer-player-meta">
               <div id="viewer-segment-title" class="viewer-player-title">{{ segmentTitle }}</div>
@@ -802,22 +850,9 @@ export function createViewerApp() {
               <label class="field compact-field">
                 <span id="speed-label">{{ t('speed') }}</span>
                 <select id="playback-speed" v-model="state.playbackSpeed">
-                  <option value="0.25">0.25x</option>
-                  <option value="0.5">0.5x</option>
-                  <option value="0.75">0.75x</option>
-                  <option value="1">1x</option>
-                  <option value="1.25">1.25x</option>
-                  <option value="1.5">1.5x</option>
-                  <option value="2">2x</option>
-                  <option value="3">3x</option>
-                  <option value="4">4x</option>
-                  <option value="8">8x</option>
-                  <option value="16">16x</option>
-                  <option value="32">32x</option>
-                  <option value="60">60x</option>
-                  <option value="120">120x</option>
-                  <option value="240">240x</option>
-                  <option value="360">360x</option>
+                  <option v-for="speedOption in playbackSpeedOptions" :key="speedOption" :value="speedOption">
+                    {{ speedOption }}x
+                  </option>
                 </select>
               </label>
               <label class="toggle">
